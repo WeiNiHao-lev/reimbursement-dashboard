@@ -55,7 +55,17 @@ def excel_to_pdf(xlsx_path: Path, out_dir: Path) -> Path:
 
 def fill_cover(form: dict, out_path: Path):
     wb = openpyxl.load_workbook(COVER_TEMPLATE)
-    ws = wb["差旅费报销明细（境内）"] if form.get("tripType") == "domestic" else wb["差旅费报销明细（境外）"]
+    is_domestic = form.get("tripType") == "domestic"
+    active_sheet_name = "差旅费报销明细（境内）" if is_domestic else "差旅费报销明细（境外）"
+    hidden_sheet_name = "差旅费报销明细（境外）" if is_domestic else "差旅费报销明细（境内）"
+
+    # Hide the unused sheet so LibreOffice only prints the active one
+    if hidden_sheet_name in wb.sheetnames:
+        wb[hidden_sheet_name].sheet_state = "hidden"
+
+    # Set active sheet
+    wb.active = wb[active_sheet_name]
+    ws = wb.active
 
     # Purpose
     ws["C4"] = f"出差事由(Purpose of Business Trip): {form.get('purpose', '')}"
@@ -143,6 +153,15 @@ def fill_cover(form: dict, out_path: Path):
 def fill_summary(form: dict, out_path: Path):
     wb = openpyxl.load_workbook(SUMMARY_TEMPLATE)
     ws = wb.active
+
+    # Fix page setup: fit all columns on one page, A4 landscape
+    from openpyxl.worksheet.page import PageMargins
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    ws.page_setup.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.page_margins = PageMargins(left=0.5, right=0.5, top=0.75, bottom=0.75)
 
     # Project number, form number
     ws["F2"] = form.get("month", "")
