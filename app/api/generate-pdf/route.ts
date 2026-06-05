@@ -3,7 +3,6 @@ import { ReimbursementForm } from "@/lib/types";
 import { groupExpenses, sumIDR, computeAllowance, formatIDR, formatDate } from "@/lib/pdf-generator";
 import { PDFDocument, rgb, StandardFonts, PageSizes } from "pdf-lib";
 
-// Helper: draw text with optional bold
 async function buildPDF(form: ReimbursementForm, receiptFiles: { name: string; data: Uint8Array; mimeType: string }[]) {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -12,6 +11,9 @@ async function buildPDF(form: ReimbursementForm, receiptFiles: { name: string; d
   const { intercity, urban, accommodation } = groupExpenses(form.receipts);
   const allowance = computeAllowance(form);
 
+  // Sanitize string: remove non-latin characters that Helvetica cannot render
+  const safe = (s: string) => s.replace(/[^\x00-\x7F]/g, "").trim();
+
   // ── PAGE 1: COVER ────────────────────────────────────────────────────────────
   const cover = pdfDoc.addPage(PageSizes.A4);
   const { width, height } = cover.getSize();
@@ -19,187 +21,193 @@ async function buildPDF(form: ReimbursementForm, receiptFiles: { name: string; d
   const L = 40;
   const R = width - 40;
   const col2 = width / 2;
+  const indigo = rgb(0.306, 0.275, 0.898);
+  const slate = rgb(0.44, 0.5, 0.56);
 
-  const line = (y2: number) => cover.drawLine({ start: { x: L, y: y2 }, end: { x: R, y: y2 }, thickness: 0.5, color: rgb(0, 0, 0) });
-  const text = (t: string, x: number, yy: number, size = 9, bold = false) =>
-    cover.drawText(t, { x, y: yy, size, font: bold ? fontBold : font, color: rgb(0, 0, 0) });
+  const line = (y2: number, color = rgb(0.8, 0.8, 0.8)) =>
+    cover.drawLine({ start: { x: L, y: y2 }, end: { x: R, y: y2 }, thickness: 0.5, color });
 
-  // Title
-  const title = form.tripType === "domestic"
-    ? "差旅费报销单-境内 / Business Trip Reimbursement Form-Domestic"
-    : "差旅费报销单-境外 / Business Trip Reimbursement Form-Overseas";
-  text(title, L, y, 11, true);
-  y -= 20;
+  const text = (t: string, x: number, yy: number, size = 9, bold = false, color = rgb(0, 0, 0)) =>
+    cover.drawText(safe(t), { x, y: yy, size, font: bold ? fontBold : font, color });
 
-  // Basic info
-  line(y); y -= 14;
-  text("基础信息 / Basic Information", L, y, 9, true); y -= 14;
-  text(`员工姓名(Name): ${form.employeeName}`, L, y);
-  text(`部门(Dept): ${form.department}`, col2, y); y -= 14;
-  text(`常驻地(Residence): ${form.permanentResidence}`, L, y);
-  text(`出差事由(Purpose): ${form.purpose}`, col2, y); y -= 8;
-  line(y); y -= 14;
+  // Header bar
+  cover.drawRectangle({ x: 0, y: height - 52, width, height: 52, color: indigo });
+  cover.drawText(
+    form.tripType === "domestic"
+      ? "Business Trip Reimbursement Form — Domestic"
+      : "Business Trip Reimbursement Form — Overseas",
+    { x: L, y: height - 34, size: 13, font: fontBold, color: rgb(1, 1, 1) }
+  );
+  cover.drawText("CCEPC Marketing Department", { x: L, y: height - 48, size: 8, font, color: rgb(0.8, 0.85, 1) });
+  y = height - 70;
 
-  // Trip info
-  text("出差信息 / Business Trip Information", L, y, 9, true); y -= 14;
-  text("出发-到达日期", L, y, 8, true);
-  text("出发地-目的地", L + 120, y, 8, true);
-  text("交通工具", L + 250, y, 8, true);
-  text("购票途径", L + 340, y, 8, true);
-  y -= 12;
+  // Section: Basic Information
+  text("BASIC INFORMATION", L, y, 7, true, slate); y -= 14;
+  text(`Name: ${form.employeeName}`, L, y);
+  text(`Department: ${form.department}`, col2, y); y -= 13;
+  text(`Permanent Residence: ${form.permanentResidence}`, L, y);
+  text(`Period: ${form.month}`, col2, y); y -= 13;
+  text(`Purpose: ${form.purpose}`, L, y); y -= 8;
+  line(y); y -= 16;
+
+  // Section: Trip Routes
+  text("TRIP ROUTES", L, y, 7, true, slate); y -= 14;
+  text("Date", L, y, 8, true, slate);
+  text("Route", L + 90, y, 8, true, slate);
+  text("Vehicle", L + 270, y, 8, true, slate);
+  text("Ticketing", L + 340, y, 8, true, slate);
+  y -= 4;
+  line(y, rgb(0.9, 0.9, 0.9)); y -= 10;
   for (const t of form.tripInfo.slice(0, 4)) {
     text(formatDate(t.date), L, y, 8);
-    text(`${t.origin} → ${t.destination}`, L + 120, y, 8);
-    text(t.vehicle, L + 250, y, 8);
+    text(safe(`${t.origin} -> ${t.destination}`), L + 90, y, 8);
+    text(t.vehicle, L + 270, y, 8);
     text(t.ticketingMethod, L + 340, y, 8);
     y -= 12;
   }
-  line(y); y -= 14;
+  if (form.tripInfo.length === 0) { text("—", L, y, 8, false, slate); y -= 12; }
+  line(y); y -= 16;
 
-  // Transportation expenses
-  text("交通费用 / Transportation Expenses", L, y, 9, true); y -= 14;
-  text("出发地-目的地", L, y, 8, true);
-  text("城市间交通费(Inter-city)", L + 160, y, 8, true);
-  text("市内交通费(Urban)", L + 290, y, 8, true);
-  text("合计(Total)", L + 400, y, 8, true);
-  y -= 12;
+  // Section: Transportation Expenses
+  text("TRANSPORTATION EXPENSES", L, y, 7, true, slate); y -= 14;
+  text("Route / City", L, y, 8, true, slate);
+  text("Inter-city (IDR)", L + 180, y, 8, true, slate);
+  text("Urban (IDR)", L + 300, y, 8, true, slate);
+  text("Total (IDR)", L + 400, y, 8, true, slate);
+  y -= 4; line(y, rgb(0.9, 0.9, 0.9)); y -= 10;
 
-  // Group urban by city
   const urbanByCity: Record<string, number> = {};
   for (const r of urban) {
     const city = r.destination?.split(",")[0] || r.origin?.split(",")[0] || "Unknown";
-    urbanByCity[city] = (urbanByCity[city] || 0) + (r.currency === "IDR" ? r.amount : 0);
+    urbanByCity[safe(city)] = (urbanByCity[safe(city)] || 0) + (r.currency === "IDR" ? r.amount : 0);
   }
   const intercityByRoute: Record<string, number> = {};
   for (const r of intercity) {
-    const route = `${r.origin || ""} - ${r.destination || ""}`;
+    const route = safe(`${r.origin || ""} - ${r.destination || ""}`);
     intercityByRoute[route] = (intercityByRoute[route] || 0) + (r.currency === "IDR" ? r.amount : 0);
   }
-
   const allRoutes = new Set([...Object.keys(urbanByCity), ...Object.keys(intercityByRoute)]);
   for (const route of Array.from(allRoutes).slice(0, 6)) {
     const inter = intercityByRoute[route] || 0;
     const urb = urbanByCity[route] || 0;
-    const total = inter + urb;
-    text(route, L, y, 8);
-    text(inter > 0 ? formatIDR(inter) : "-", L + 160, y, 8);
-    text(urb > 0 ? formatIDR(urb) : "-", L + 290, y, 8);
-    text(formatIDR(total), L + 400, y, 8);
+    text(route || "—", L, y, 8);
+    text(inter > 0 ? formatIDR(inter) : "—", L + 180, y, 8);
+    text(urb > 0 ? formatIDR(urb) : "—", L + 300, y, 8);
+    text(formatIDR(inter + urb), L + 400, y, 8);
     y -= 12;
   }
-  line(y); y -= 14;
+  if (allRoutes.size === 0) { text("—", L, y, 8, false, slate); y -= 12; }
+  line(y); y -= 16;
 
-  // Accommodation
-  text("住宿费用 / Accommodation Expenses", L, y, 9, true); y -= 14;
-  text("发生地(Location)", L, y, 8, true);
-  text("住宿天数(Days)", L + 160, y, 8, true);
-  text("报销金额(Amount)", L + 270, y, 8, true);
-  y -= 12;
+  // Section: Accommodation
+  text("ACCOMMODATION EXPENSES", L, y, 7, true, slate); y -= 14;
+  text("Location", L, y, 8, true, slate);
+  text("Nights", L + 200, y, 8, true, slate);
+  text("Amount (IDR)", L + 280, y, 8, true, slate);
+  y -= 4; line(y, rgb(0.9, 0.9, 0.9)); y -= 10;
   for (const a of form.accommodation.slice(0, 4)) {
-    text(a.location, L, y, 8);
-    text(String(a.days), L + 160, y, 8);
-    text(formatIDR(a.amount), L + 270, y, 8);
+    text(safe(a.location), L, y, 8);
+    text(String(a.days), L + 200, y, 8);
+    text(formatIDR(a.amount), L + 280, y, 8);
     y -= 12;
   }
   if (accommodation.length > 0 && form.accommodation.length === 0) {
     for (const a of accommodation.slice(0, 4)) {
-      text(a.destination || a.origin || "-", L, y, 8);
-      text("-", L + 160, y, 8);
-      text(formatIDR(a.amount), L + 270, y, 8);
+      text(safe(a.destination || a.origin || "—"), L, y, 8);
+      text("—", L + 200, y, 8);
+      text(formatIDR(a.amount), L + 280, y, 8);
       y -= 12;
     }
   }
-  line(y); y -= 14;
+  if (form.accommodation.length === 0 && accommodation.length === 0) {
+    text("—", L, y, 8, false, slate); y -= 12;
+  }
+  line(y); y -= 16;
 
-  // Allowance
-  text("补贴信息 / Allowance Information", L, y, 9, true); y -= 14;
-  text("伙食费补贴 (Meal Allowance) IDR 200/day", L, y, 8, true); y -= 12;
-  text("补贴日期起(Start)", L, y, 8, true);
-  text("补贴日期止(End)", L + 130, y, 8, true);
-  text("天数(Days)", L + 260, y, 8, true);
-  text("金额(Amount)", L + 340, y, 8, true);
-  y -= 12;
+  // Section: Allowance
+  text("ALLOWANCE INFORMATION", L, y, 7, true, slate); y -= 14;
+  text("Meal Allowance  IDR 200,000/day", L, y, 8, true); y -= 12;
+  text("Start Date", L, y, 8, true, slate);
+  text("End Date", L + 130, y, 8, true, slate);
+  text("Days", L + 260, y, 8, true, slate);
+  text("Total Amount", L + 330, y, 8, true, slate);
+  y -= 4; line(y, rgb(0.9, 0.9, 0.9)); y -= 10;
   text(formatDate(allowance.startDate), L, y, 8);
   text(formatDate(allowance.endDate), L + 130, y, 8);
   text(String(allowance.days), L + 260, y, 8);
-  text(formatIDR(allowance.mealAmount), L + 340, y, 8);
+  text(formatIDR(allowance.mealAmount), L + 330, y, 8);
   y -= 16;
-  line(y); y -= 14;
+  line(y); y -= 16;
 
-  // Total
+  // Total bar
   const intercityTotal = sumIDR(intercity);
   const urbanTotal = sumIDR(urban);
   const accommTotal = form.accommodation.reduce((s, a) => s + a.amount, 0);
   const grandTotal = intercityTotal + urbanTotal + accommTotal + allowance.mealAmount;
-  text("实际报销总金额 / Total Reimbursement:", L, y, 10, true);
-  text(formatIDR(grandTotal), L + 230, y, 10, true);
-  y -= 20;
+  cover.drawRectangle({ x: L, y: y - 4, width: R - L, height: 22, color: rgb(0.949, 0.949, 0.980) });
+  cover.drawText("TOTAL REIMBURSEMENT", { x: L + 8, y: y + 5, size: 9, font: fontBold, color: indigo });
+  cover.drawText(formatIDR(grandTotal), { x: R - 100, y: y + 5, size: 10, font: fontBold, color: indigo });
+  y -= 26;
 
   // Approval
-  line(y); y -= 14;
-  text("领导审批 / Approval:", L, y, 9, true);
-  text("___________________________________", L + 120, y, 9);
-  y -= 30;
-  if (form.remarks) {
-    text(`备注(Remarks): ${form.remarks}`, L, y, 8);
-  }
+  y -= 10;
+  text("Approved by:", L, y, 9, true); y -= 20;
+  line(y); y -= 8;
+  if (form.remarks) text(`Remarks: ${safe(form.remarks)}`, L, y, 8, false, slate);
 
   // ── PAGE 2: SUMMARY ─────────────────────────────────────────────────────────
   const summary = pdfDoc.addPage(PageSizes.A4);
   const sw = summary.getSize().width;
-  let sy = summary.getSize().height - 40;
+  const sh = summary.getSize().height;
+  let sy = sh - 40;
   const sL = 30;
 
-  const stext = (t: string, x: number, yy: number, size = 8, bold = false) =>
-    summary.drawText(String(t), { x, y: yy, size, font: bold ? fontBold : font, color: rgb(0, 0, 0) });
-  const sline = (yy: number) =>
-    summary.drawLine({ start: { x: sL, y: yy }, end: { x: sw - 30, y: yy }, thickness: 0.5, color: rgb(0, 0, 0) });
+  const stext = (t: string, x: number, yy: number, size = 8, bold = false, color = rgb(0, 0, 0)) =>
+    summary.drawText(safe(String(t)), { x, y: yy, size, font: bold ? fontBold : font, color });
+  const sline = (yy: number, color = rgb(0.85, 0.85, 0.85)) =>
+    summary.drawLine({ start: { x: sL, y: yy }, end: { x: sw - 30, y: yy }, thickness: 0.5, color });
 
-  stext("境内一般性开支明细表 / Domestic Daily Expenses List", sL, sy, 11, true); sy -= 18;
-  stext(`部门: ${form.department}`, sL, sy, 8);
-  stext(`月份: ${form.month}`, sL + 180, sy, 8);
-  sy -= 14;
+  // Header bar
+  summary.drawRectangle({ x: 0, y: sh - 52, width: sw, height: 52, color: indigo });
+  summary.drawText("Domestic Daily Expenses List", { x: sL, y: sh - 34, size: 13, font: fontBold, color: rgb(1, 1, 1) });
+  summary.drawText(`${form.department}  |  ${form.month}`, { x: sL, y: sh - 48, size: 8, font, color: rgb(0.8, 0.85, 1) });
+  sy = sh - 70;
 
-  // Header row
-  const cols = [sL, sL + 20, sL + 80, sL + 155, sL + 260, sL + 330, sL + 400];
-  stext("序号", cols[0], sy, 8, true);
-  stext("姓名(Name)", cols[1], sy, 8, true);
-  stext("日期(Date)", cols[2], sy, 8, true);
-  stext("费用类型(Type)", cols[3], sy, 8, true);
-  stext("币种", cols[4], sy, 8, true);
-  stext("金额(Amount)", cols[5], sy, 8, true);
-  stext("备注(Remarks)", cols[6], sy, 8, true);
-  sy -= 12;
-  sline(sy); sy -= 4;
+  // Table header
+  const cols = [sL, sL + 22, sL + 85, sL + 165, sL + 265, sL + 335, sL + 405];
+  const colLabels = ["#", "Name", "Date", "Expense Type", "Currency", "Amount", "Notes"];
+  summary.drawRectangle({ x: sL, y: sy - 4, width: sw - 60, height: 16, color: rgb(0.949, 0.949, 0.980) });
+  colLabels.forEach((lbl, i) => stext(lbl, cols[i], sy + 2, 7, true, indigo));
+  sy -= 8; sline(sy); sy -= 4;
 
   const categoryLabel: Record<string, string> = {
-    transportation_intercity: "交通费(城市间)",
-    transportation_urban: "交通费(市内)",
-    accommodation: "住宿费",
-    other: "其他",
+    transportation_intercity: "Transport (Intercity)",
+    transportation_urban: "Transport (Urban)",
+    accommodation: "Accommodation",
+    other: "Other",
   };
 
   const allReceipts = [...form.receipts].sort((a, b) => a.date.localeCompare(b.date));
   allReceipts.forEach((r, i) => {
-    sy -= 12;
+    sy -= 13;
+    if (i % 2 === 0) summary.drawRectangle({ x: sL, y: sy - 3, width: sw - 60, height: 13, color: rgb(0.98, 0.98, 0.99) });
     stext(String(i + 1), cols[0], sy, 8);
-    stext(form.employeeName, cols[1], sy, 8);
+    stext(safe(form.employeeName), cols[1], sy, 8);
     stext(formatDate(r.date), cols[2], sy, 8);
     stext(categoryLabel[r.category] || r.category, cols[3], sy, 8);
     stext(r.currency, cols[4], sy, 8);
     stext(r.amount.toLocaleString("id-ID"), cols[5], sy, 8);
-    const note = r.vendor ? `${r.vendor}: ${r.origin || ""} → ${r.destination || ""}` : r.description;
-    stext(note.substring(0, 40), cols[6], sy, 7);
+    const note = safe(r.vendor ? `${r.vendor}: ${r.origin || ""} -> ${r.destination || ""}` : r.description);
+    stext(note.substring(0, 38), cols[6], sy, 7, false, slate);
   });
 
-  sy -= 16;
-  sline(sy); sy -= 12;
-  stext("合计(Total):", cols[3], sy, 9, true);
-  stext(formatIDR(sumIDR(form.receipts)), cols[5], sy, 9, true);
+  sy -= 18; sline(sy, indigo); sy -= 14;
+  stext("TOTAL", cols[3], sy, 9, true, indigo);
+  stext(formatIDR(sumIDR(form.receipts)), cols[5], sy, 9, true, indigo);
 
-  sy -= 20;
-  stext(`制表人: ${form.employeeName}`, sL, sy, 8);
-  stext("审核人: _______________", sL + 200, sy, 8);
+  sy -= 30;
+  stext(`Prepared by: ${safe(form.employeeName)}`, sL, sy, 8);
+  stext("Reviewed by: _______________", sL + 200, sy, 8);
 
   // ── RECEIPT PAGES ────────────────────────────────────────────────────────────
   for (const receiptFile of receiptFiles) {
@@ -210,34 +218,30 @@ async function buildPDF(form: ReimbursementForm, receiptFiles: { name: string; d
       } else if (receiptFile.mimeType === "image/png") {
         embeddedImage = await pdfDoc.embedPng(receiptFile.data);
       } else {
-        // For PDFs, embed existing PDF pages
         try {
           const srcDoc = await PDFDocument.load(receiptFile.data);
           const pages = await pdfDoc.copyPages(srcDoc, srcDoc.getPageIndices());
           pages.forEach((p) => pdfDoc.addPage(p));
-        } catch {
-          // skip unparseable
-        }
+        } catch { /* skip */ }
         continue;
       }
       const imgPage = pdfDoc.addPage(PageSizes.A4);
       const { width: pw, height: ph } = imgPage.getSize();
       const margin = 30;
       const maxW = pw - margin * 2;
-      const maxH = ph - margin * 2 - 20;
+      const maxH = ph - margin * 2 - 24;
       const { width: iw, height: ih } = embeddedImage;
       const scale = Math.min(maxW / iw, maxH / ih);
       const drawW = iw * scale;
       const drawH = ih * scale;
-      const xOffset = (pw - drawW) / 2;
-      const yOffset = (ph - drawH) / 2;
-      imgPage.drawImage(embeddedImage, { x: xOffset, y: yOffset, width: drawW, height: drawH });
-
-      // Label
-      imgPage.drawText(receiptFile.name, { x: margin, y: ph - 20, size: 8, font, color: rgb(0.4, 0.4, 0.4) });
-    } catch {
-      // skip individual receipt errors
-    }
+      imgPage.drawImage(embeddedImage, {
+        x: (pw - drawW) / 2,
+        y: (ph - drawH) / 2,
+        width: drawW,
+        height: drawH,
+      });
+      imgPage.drawText(safe(receiptFile.name), { x: margin, y: ph - 18, size: 8, font, color: rgb(0.5, 0.5, 0.5) });
+    } catch { /* skip */ }
   }
 
   return await pdfDoc.save();
@@ -250,15 +254,10 @@ export async function POST(req: NextRequest) {
     const form: ReimbursementForm = JSON.parse(formJson);
 
     const receiptFiles: { name: string; data: Uint8Array; mimeType: string }[] = [];
-    const entries = Array.from(formData.entries());
-    for (const [key, value] of entries) {
+    for (const [key, value] of Array.from(formData.entries())) {
       if (key.startsWith("receipt_") && value instanceof File) {
         const ab = await value.arrayBuffer();
-        receiptFiles.push({
-          name: value.name,
-          data: new Uint8Array(ab),
-          mimeType: value.type,
-        });
+        receiptFiles.push({ name: value.name, data: new Uint8Array(ab), mimeType: value.type });
       }
     }
 

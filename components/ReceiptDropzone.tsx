@@ -26,10 +26,10 @@ const CATEGORY_LABELS: Record<ExpenseCategory, string> = {
 };
 
 const CATEGORY_COLORS: Record<ExpenseCategory, string> = {
-  transportation_intercity: "bg-blue-100 text-blue-800",
-  transportation_urban: "bg-green-100 text-green-800",
-  accommodation: "bg-purple-100 text-purple-800",
-  other: "bg-gray-100 text-gray-800",
+  transportation_intercity: "bg-indigo-100 text-indigo-700",
+  transportation_urban: "bg-indigo-50 text-indigo-600",
+  accommodation: "bg-slate-100 text-slate-700",
+  other: "bg-slate-50 text-slate-500",
 };
 
 interface Props {
@@ -127,7 +127,7 @@ export default function ReceiptDropzone({ onChange }: Props) {
       <div
         {...getRootProps()}
         className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
-          isDragActive ? "border-blue-500 bg-blue-50" : "border-gray-300 hover:border-blue-400 hover:bg-gray-50"
+          isDragActive ? "border-indigo-500 bg-indigo-50" : "border-slate-200 hover:border-indigo-300 hover:bg-slate-50"
         }`}
       >
         <input {...getInputProps()} />
