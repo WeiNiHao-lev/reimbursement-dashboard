@@ -11,8 +11,15 @@ async function buildPDF(form: ReimbursementForm, receiptFiles: { name: string; d
   const { intercity, urban, accommodation } = groupExpenses(form.receipts);
   const allowance = computeAllowance(form);
 
-  // Sanitize string: remove non-latin characters that Helvetica cannot render
-  const safe = (s: string) => s.replace(/[^\x00-\x7F]/g, "").trim();
+  // Sanitize: strip anything outside WinAnsi printable range, replace common symbols
+  const safe = (s: string) =>
+    s
+      .replace(/—/g, "-")   // em dash
+      .replace(/–/g, "-")   // en dash
+      .replace(/→/g, "->")  // arrow
+      .replace(/×/g, "x")   // multiplication sign
+      .replace(/[^\x20-\x7E]/g, "") // strip remaining non-printable / non-ASCII
+      .trim();
 
   // ── PAGE 1: COVER ────────────────────────────────────────────────────────────
   const cover = pdfDoc.addPage(PageSizes.A4);
@@ -33,12 +40,12 @@ async function buildPDF(form: ReimbursementForm, receiptFiles: { name: string; d
   // Header bar
   cover.drawRectangle({ x: 0, y: height - 52, width, height: 52, color: indigo });
   cover.drawText(
-    form.tripType === "domestic"
-      ? "Business Trip Reimbursement Form — Domestic"
-      : "Business Trip Reimbursement Form — Overseas",
+    safe(form.tripType === "domestic"
+      ? "Business Trip Reimbursement Form - Domestic"
+      : "Business Trip Reimbursement Form - Overseas"),
     { x: L, y: height - 34, size: 13, font: fontBold, color: rgb(1, 1, 1) }
   );
-  cover.drawText("CCEPC Marketing Department", { x: L, y: height - 48, size: 8, font, color: rgb(0.8, 0.85, 1) });
+  cover.drawText(safe("CCEPC Marketing Department"), { x: L, y: height - 48, size: 8, font, color: rgb(0.8, 0.85, 1) });
   y = height - 70;
 
   // Section: Basic Information
@@ -145,8 +152,8 @@ async function buildPDF(form: ReimbursementForm, receiptFiles: { name: string; d
   const accommTotal = form.accommodation.reduce((s, a) => s + a.amount, 0);
   const grandTotal = intercityTotal + urbanTotal + accommTotal + allowance.mealAmount;
   cover.drawRectangle({ x: L, y: y - 4, width: R - L, height: 22, color: rgb(0.949, 0.949, 0.980) });
-  cover.drawText("TOTAL REIMBURSEMENT", { x: L + 8, y: y + 5, size: 9, font: fontBold, color: indigo });
-  cover.drawText(formatIDR(grandTotal), { x: R - 100, y: y + 5, size: 10, font: fontBold, color: indigo });
+  cover.drawText(safe("TOTAL REIMBURSEMENT"), { x: L + 8, y: y + 5, size: 9, font: fontBold, color: indigo });
+  cover.drawText(safe(formatIDR(grandTotal)), { x: R - 100, y: y + 5, size: 10, font: fontBold, color: indigo });
   y -= 26;
 
   // Approval
@@ -169,15 +176,15 @@ async function buildPDF(form: ReimbursementForm, receiptFiles: { name: string; d
 
   // Header bar
   summary.drawRectangle({ x: 0, y: sh - 52, width: sw, height: 52, color: indigo });
-  summary.drawText("Domestic Daily Expenses List", { x: sL, y: sh - 34, size: 13, font: fontBold, color: rgb(1, 1, 1) });
-  summary.drawText(`${form.department}  |  ${form.month}`, { x: sL, y: sh - 48, size: 8, font, color: rgb(0.8, 0.85, 1) });
+  summary.drawText(safe("Domestic Daily Expenses List"), { x: sL, y: sh - 34, size: 13, font: fontBold, color: rgb(1, 1, 1) });
+  summary.drawText(safe(`${form.department}  |  ${form.month}`), { x: sL, y: sh - 48, size: 8, font, color: rgb(0.8, 0.85, 1) });
   sy = sh - 70;
 
   // Table header
   const cols = [sL, sL + 22, sL + 85, sL + 165, sL + 265, sL + 335, sL + 405];
   const colLabels = ["#", "Name", "Date", "Expense Type", "Currency", "Amount", "Notes"];
   summary.drawRectangle({ x: sL, y: sy - 4, width: sw - 60, height: 16, color: rgb(0.949, 0.949, 0.980) });
-  colLabels.forEach((lbl, i) => stext(lbl, cols[i], sy + 2, 7, true, indigo));
+  colLabels.forEach((lbl, i) => stext(safe(lbl), cols[i], sy + 2, 7, true, indigo));
   sy -= 8; sline(sy); sy -= 4;
 
   const categoryLabel: Record<string, string> = {
