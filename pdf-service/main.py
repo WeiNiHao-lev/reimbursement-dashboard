@@ -71,38 +71,45 @@ def fill_cover(form: dict, out_path: Path):
     ws["C4"] = f"出差事由(Purpose of Business Trip): {form.get('purpose', '')}"
 
     # Trip info rows (starting row 7)
+    # Date cell: "07-May-2026" if same day, "07-May-2026 - 09-May-2026" if different
     trip_info = form.get("tripInfo", [])
     for i, t in enumerate(trip_info[:3]):
         row = 7 + i
+        depart = t.get("date", "")
+        arrive = t.get("arriveDate", "") or ""
+        # Build date string
         try:
-            ws[f"A{row}"] = datetime.fromisoformat(t["date"])
-            ws[f"A{row}"].number_format = "DD-MMM-YYYY"
+            d1_str = datetime.fromisoformat(depart).strftime("%d-%b-%Y") if depart else ""
+            d2_str = datetime.fromisoformat(arrive).strftime("%d-%b-%Y") if arrive and arrive != depart else ""
+            date_str = f"{d1_str} - {d2_str}" if d2_str else d1_str
         except Exception:
-            ws[f"A{row}"] = t.get("date", "")
+            date_str = depart
+        ws[f"A{row}"] = date_str
         ws[f"B{row}"] = f"{t.get('origin', '')} - {t.get('destination', '')}"
         ws[f"C{row}"] = t.get("vehicle", "")
         ws[f"D{row}"] = t.get("ticketingMethod", "")
 
-    # Transportation expenses
+    # Transportation expenses — group by full route (origin - destination)
     receipts = form.get("receipts", [])
-    urban_by_city: dict = {}
+    urban_by_route: dict = {}
     intercity_by_route: dict = {}
     for r in receipts:
         if r.get("currency") != "IDR":
             continue
+        origin = r.get("origin", "").split(",")[0].strip()
+        dest = r.get("destination", "").split(",")[0].strip()
+        route = f"{origin} - {dest}" if origin or dest else "Unknown"
         if r.get("category") == "transportation_urban":
-            city = (r.get("destination") or r.get("origin") or "Unknown").split(",")[0]
-            urban_by_city[city] = urban_by_city.get(city, 0) + r.get("amount", 0)
+            urban_by_route[route] = urban_by_route.get(route, 0) + r.get("amount", 0)
         elif r.get("category") == "transportation_intercity":
-            route = f"{r.get('origin', '')} - {r.get('destination', '')}"
             intercity_by_route[route] = intercity_by_route.get(route, 0) + r.get("amount", 0)
 
-    all_keys = list(dict.fromkeys(list(urban_by_city.keys()) + list(intercity_by_route.keys())))
+    all_keys = list(dict.fromkeys(list(urban_by_route.keys()) + list(intercity_by_route.keys())))
     for i, key in enumerate(all_keys[:6]):
         row = 13 + i
         ws[f"A{row}"] = key
         ws[f"B{row}"] = intercity_by_route.get(key, 0) or 0
-        ws[f"C{row}"] = urban_by_city.get(key, 0) or 0
+        ws[f"C{row}"] = urban_by_route.get(key, 0) or 0
         ws[f"D{row}"] = f"=B{row}+C{row}"
 
     # Accommodation
@@ -202,9 +209,17 @@ def fill_summary(form: dict, out_path: Path):
         ws[f"E{row}"] = r.get("currency", "IDR")
         ws[f"F{row}"] = r.get("amount", 0)
         vendor = r.get("vendor", "")
-        origin = r.get("origin", "")
-        dest = r.get("destination", "")
-        note = f"{vendor}: {origin} - {dest}" if vendor else r.get("description", "")
+        origin = r.get("origin", "").split(",")[0].strip()
+        dest = r.get("destination", "").split(",")[0].strip()
+        route_str = f"{origin} -> {dest}" if (origin or dest) else ""
+        if vendor and route_str:
+            note = f"{vendor}: {route_str}"
+        elif vendor:
+            note = vendor
+        elif route_str:
+            note = route_str
+        else:
+            note = r.get("description", "")
         ws[f"H{row}"] = note[:80]
 
     # Update total formula range

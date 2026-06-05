@@ -18,7 +18,8 @@ export interface ExtractedReceipt {
 }
 
 export interface TripInfo {
-  date: string;
+  date: string;        // departure date
+  arriveDate?: string; // arrival date (leave empty if same day)
   origin: string;
   destination: string;
   vehicle: string;

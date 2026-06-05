@@ -196,11 +196,6 @@ export default function Home() {
                 <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Trip Routes</CardTitle>
               </CardHeader>
               <CardContent className="px-5 pb-4">
-                <div className="grid grid-cols-[1fr_1.5fr_1fr_1fr_auto] gap-2 mb-2">
-                  {["Date", "Route (From → To)", "Vehicle", "Ticketing", ""].map((h) => (
-                    <p key={h} className="text-[11px] text-slate-400 font-medium">{h}</p>
-                  ))}
-                </div>
                 <TripInfoEditor rows={tripInfo} onChange={setTripInfo} />
               </CardContent>
             </Card>
