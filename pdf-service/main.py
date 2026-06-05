@@ -118,10 +118,21 @@ def fill_cover(form: dict, out_path: Path):
         ws[f"B{row}"] = a.get("days", 0)
         ws[f"C{row}"] = a.get("amount", 0)
 
-    # Allowance
+    # Allowance — use override dates if provided, else auto-detect from receipts/tripInfo
     start_date = form.get("allowanceStartDate") or ""
     end_date = form.get("allowanceEndDate") or ""
     daily = form.get("mealAllowanceDailyIDR", 200000)
+
+    if not start_date or not end_date:
+        all_dates = sorted([
+            r.get("date", "") for r in form.get("receipts", [])
+        ] + [
+            t.get("date", "") for t in form.get("tripInfo", [])
+        ])
+        all_dates = [d for d in all_dates if d]
+        if all_dates:
+            start_date = start_date or all_dates[0]
+            end_date = end_date or all_dates[-1]
 
     if start_date:
         try:
@@ -129,6 +140,7 @@ def fill_cover(form: dict, out_path: Path):
             ws["A29"].number_format = "DD-MMM-YYYY"
         except Exception:
             ws["A29"] = start_date
+
     if end_date:
         try:
             ws["B29"] = datetime.fromisoformat(end_date)
@@ -136,14 +148,14 @@ def fill_cover(form: dict, out_path: Path):
         except Exception:
             ws["B29"] = end_date
 
-    # Days formula and amount
+    # Days and amount — always compute if we have both dates
     if start_date and end_date:
         try:
             d1 = datetime.fromisoformat(start_date)
             d2 = datetime.fromisoformat(end_date)
-            days = (d2 - d1).days + 1
-            ws["C29"] = max(days, 1)
-            ws["D29"] = max(days, 1) * daily
+            days = max((d2 - d1).days + 1, 1)
+            ws["C29"] = days
+            ws["D29"] = days * daily
         except Exception:
             pass
 
