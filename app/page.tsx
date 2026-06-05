@@ -66,6 +66,16 @@ export default function Home() {
     }
     setGenerating(true);
     try {
+      // Always compute effective dates — use override if set, else auto-detect
+      const allDates = [
+        ...receipts.map((r) => r.data.date),
+        ...tripInfo.map((t) => t.date),
+      ].filter(Boolean).sort();
+      const autoStart = allDates[0] || new Date().toISOString().split("T")[0];
+      const autoEnd = allDates[allDates.length - 1] || autoStart;
+      const effectiveStart = startDateOverride || autoStart;
+      const effectiveEnd = endDateOverride || autoEnd;
+
       const form: ReimbursementForm = {
         tripType, employeeName, department,
         permanentResidence: residence, purpose, month,
@@ -75,8 +85,8 @@ export default function Home() {
         transportAllowanceDailyIDR: TRANSPORT_DAILY,
         mealAllowanceDailyCNY: 100,
         exchangeRate1: 2300, exchangeRate2: 2300, remarks,
-        allowanceStartDate: startDateOverride || undefined,
-        allowanceEndDate: endDateOverride || undefined,
+        allowanceStartDate: effectiveStart,
+        allowanceEndDate: effectiveEnd,
       };
       const fd = new FormData();
       fd.append("form", JSON.stringify(form));
