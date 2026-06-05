@@ -155,10 +155,13 @@ def fill_summary(form: dict, out_path: Path):
     ws = wb.active
 
     # Fix page setup: fit all columns on one page, A4 landscape
-    from openpyxl.worksheet.page import PageMargins
-    ws.page_setup.paperSize = ws.PAPERSIZE_A4
-    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
-    ws.page_setup.fitToPage = True
+    from openpyxl.worksheet.page import PageMargins, PrintPageSetup
+    from openpyxl.worksheet.properties import WorksheetProperties, PageSetupProperties
+    if ws.sheet_properties is None:
+        ws.sheet_properties = WorksheetProperties()
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws.page_setup.paperSize = 9  # A4
+    ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.page_margins = PageMargins(left=0.5, right=0.5, top=0.75, bottom=0.75)
