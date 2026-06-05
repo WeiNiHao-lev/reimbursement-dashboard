@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { extractReceiptData } from "@/lib/extract";
 
 export async function POST(req: NextRequest) {
+  // Manual mode: no API key configured
+  if (!process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY === "your_anthropic_api_key") {
+    return NextResponse.json({ manual: true }, { status: 200 });
+  }
+
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File;
@@ -10,14 +15,9 @@ export async function POST(req: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString("base64");
 
-    let mediaType = file.type;
-    // Normalize PDF — Claude can handle PDF as image via base64 for single-page,
-    // but for multi-page PDFs we'll just send first page indicator
+    const mediaType = file.type;
     if (!["image/jpeg", "image/png", "image/gif", "image/webp"].includes(mediaType)) {
-      // For PDFs and other formats, use a placeholder media type and note
-      return NextResponse.json({
-        error: "Only image files (JPG, PNG, WebP) are supported for AI extraction. PDFs will be included as receipts but cannot be auto-extracted."
-      }, { status: 422 });
+      return NextResponse.json({ manual: true }, { status: 200 });
     }
 
     const result = await extractReceiptData(base64, mediaType, file.name);

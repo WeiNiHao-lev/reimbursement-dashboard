@@ -47,27 +47,27 @@ export default function ReceiptDropzone({ onChange }: Props) {
   const extractFile = async (item: ReceiptItem): Promise<ReceiptItem> => {
     const formData = new FormData();
     formData.append("file", item.file);
+    const blank = {
+      fileName: item.file.name,
+      date: new Date().toISOString().split("T")[0],
+      description: "",
+      amount: 0,
+      currency: "IDR" as const,
+      category: "other" as const,
+      origin: "",
+      destination: "",
+    };
     try {
       const res = await fetch("/api/extract", { method: "POST", body: formData });
       const json = await res.json();
-      if (!res.ok || json.error) {
-        // Non-extractable (PDF etc) — still keep as attachment with manual data
-        return {
-          ...item,
-          status: "done",
-          data: {
-            ...item.data,
-            fileName: item.file.name,
-            date: new Date().toISOString().split("T")[0],
-            description: item.file.name,
-            amount: 0,
-            currency: "IDR",
-            category: "other",
-          },
-          error: json.error,
-        };
+      // Manual mode — no API key, show empty form
+      if (json.manual) {
+        return { ...item, status: "done", data: { ...item.data, id: item.id, ...blank }, error: undefined };
       }
-      return { ...item, status: "done", data: { ...item.data, id: item.id, fileName: item.file.name, fileUrl: item.previewUrl, ...json } };
+      if (!res.ok || json.error) {
+        return { ...item, status: "done", data: { ...item.data, id: item.id, ...blank }, error: json.error };
+      }
+      return { ...item, status: "done", data: { ...item.data, id: item.id, fileUrl: item.previewUrl, ...json } };
     } catch {
       return { ...item, status: "error", error: "Network error" };
     }
@@ -163,7 +163,7 @@ export default function ReceiptDropzone({ onChange }: Props) {
                   </div>
 
                   {item.status === "extracting" ? (
-                    <p className="text-xs text-gray-400">Extracting with AI…</p>
+                    <p className="text-xs text-gray-400">Loading…</p>
                   ) : (
                     <div className="grid grid-cols-2 gap-2">
                       <div>
