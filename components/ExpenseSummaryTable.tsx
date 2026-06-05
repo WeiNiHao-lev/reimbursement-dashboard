@@ -1,19 +1,13 @@
 "use client";
 
 import { ExtractedReceipt, ExpenseCategory } from "@/lib/types";
+import { Receipt } from "lucide-react";
 
 const LABELS: Record<ExpenseCategory, string> = {
-  transportation_intercity: "Transport Inter-city",
-  transportation_urban: "Transport Urban",
+  transportation_intercity: "Transport — Inter-city",
+  transportation_urban: "Transport — Urban",
   accommodation: "Accommodation",
   other: "Other",
-};
-
-const COLORS: Record<ExpenseCategory, string> = {
-  transportation_intercity: "text-blue-700 bg-blue-50",
-  transportation_urban: "text-green-700 bg-green-50",
-  accommodation: "text-purple-700 bg-purple-50",
-  other: "text-gray-700 bg-gray-50",
 };
 
 interface Props {
@@ -38,46 +32,41 @@ export default function ExpenseSummaryTable({ receipts, mealAllowance, transport
   const allowanceTotal = mealAllowance + (tripType === "overseas" ? transportAllowance : 0);
   const grandTotal = expenseTotal + allowanceTotal;
 
+  const rows: { label: string; amount: number; isAllowance?: boolean }[] = [
+    { label: LABELS.transportation_intercity, amount: grouped.transportation_intercity },
+    { label: LABELS.transportation_urban, amount: grouped.transportation_urban },
+    { label: LABELS.accommodation, amount: grouped.accommodation },
+    { label: LABELS.other, amount: grouped.other },
+    { label: "Meal Allowance", amount: mealAllowance, isAllowance: true },
+    ...(tripType === "overseas" ? [{ label: "Transport Allowance", amount: transportAllowance, isAllowance: true }] : []),
+  ];
+
   return (
-    <div className="rounded-lg border overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-gray-50 border-b">
-            <th className="text-left px-3 py-2 text-xs text-gray-500 font-medium">Category</th>
-            <th className="text-right px-3 py-2 text-xs text-gray-500 font-medium">Amount (IDR)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(Object.entries(grouped) as [ExpenseCategory, number][]).map(([cat, amt]) => (
-            <tr key={cat} className="border-b last:border-0">
-              <td className="px-3 py-2">
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${COLORS[cat]}`}>
-                  {LABELS[cat]}
-                </span>
-              </td>
-              <td className="px-3 py-2 text-right font-mono text-sm">
-                {amt > 0 ? fmt(amt) : <span className="text-gray-300">—</span>}
-              </td>
-            </tr>
-          ))}
-          <tr className="border-b bg-amber-50">
-            <td className="px-3 py-2 text-xs text-amber-700 font-medium">Meal Allowance</td>
-            <td className="px-3 py-2 text-right font-mono text-sm text-amber-700">{fmt(mealAllowance)}</td>
-          </tr>
-          {tripType === "overseas" && (
-            <tr className="border-b bg-amber-50">
-              <td className="px-3 py-2 text-xs text-amber-700 font-medium">Transport Allowance</td>
-              <td className="px-3 py-2 text-right font-mono text-sm text-amber-700">{fmt(transportAllowance)}</td>
-            </tr>
-          )}
-        </tbody>
-        <tfoot>
-          <tr className="bg-gray-900 text-white">
-            <td className="px-3 py-2.5 font-bold text-sm">TOTAL REIMBURSEMENT</td>
-            <td className="px-3 py-2.5 text-right font-bold font-mono text-sm">{fmt(grandTotal)}</td>
-          </tr>
-        </tfoot>
-      </table>
+    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-4 py-3 bg-slate-50 border-b border-slate-200">
+        <Receipt size={14} className="text-slate-500" />
+        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Summary</span>
+      </div>
+
+      <div className="divide-y divide-slate-100">
+        {rows.map(({ label, amount, isAllowance }) => (
+          <div key={label} className="flex items-center justify-between px-4 py-2.5">
+            <span className={`text-xs ${isAllowance ? "text-indigo-600 font-medium" : "text-slate-500"}`}>
+              {label}
+            </span>
+            <span className={`text-sm font-mono ${amount > 0 ? (isAllowance ? "text-indigo-700 font-semibold" : "text-slate-700 font-medium") : "text-slate-300"}`}>
+              {amount > 0 ? fmt(amount) : "—"}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Total */}
+      <div className="flex items-center justify-between px-4 py-3 bg-indigo-600">
+        <span className="text-xs font-bold text-indigo-100 uppercase tracking-wide">Total Reimbursement</span>
+        <span className="text-sm font-bold font-mono text-white">{fmt(grandTotal)}</span>
+      </div>
     </div>
   );
 }

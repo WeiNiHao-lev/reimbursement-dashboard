@@ -30,21 +30,26 @@ export default function Home() {
   const [tripInfo, setTripInfo] = useState<TripInfo[]>([]);
   const [receipts, setReceipts] = useState<{ file: File; data: ExtractedReceipt }[]>([]);
   const [accommodation, setAccommodation] = useState<AccommodationRow[]>([]);
-  const [mealAllowanceDaily, setMealAllowanceDaily] = useState(200000);
-  const [transportAllowanceDaily, setTransportAllowanceDaily] = useState(200000);
+  const [startDateOverride, setStartDateOverride] = useState("");
+  const [endDateOverride, setEndDateOverride] = useState("");
   const [remarks, setRemarks] = useState("");
   const [generating, setGenerating] = useState(false);
+
+  const MEAL_DAILY = 200000;
+  const TRANSPORT_DAILY = 200000;
 
   const computeAllowanceTotals = () => {
     const allDates = [
       ...receipts.map((r) => r.data.date),
       ...tripInfo.map((t) => t.date),
     ].filter(Boolean).sort();
-    if (allDates.length === 0) return { days: 1, mealTotal: mealAllowanceDaily, transportTotal: transportAllowanceDaily };
-    const start = allDates[0];
-    const end = allDates[allDates.length - 1];
-    const days = differenceInDays(parseISO(end), parseISO(start)) + 1;
-    return { days, mealTotal: days * mealAllowanceDaily, transportTotal: days * transportAllowanceDaily };
+    const autoStart = allDates[0] || new Date().toISOString().split("T")[0];
+    const autoEnd = allDates[allDates.length - 1] || autoStart;
+    const start = startDateOverride || autoStart;
+    const end = endDateOverride || autoEnd;
+    let days = differenceInDays(parseISO(end), parseISO(start)) + 1;
+    if (days < 1) days = 1;
+    return { days, mealTotal: days * MEAL_DAILY, transportTotal: days * TRANSPORT_DAILY };
   };
 
   const { mealTotal, transportTotal } = computeAllowanceTotals();
@@ -66,8 +71,8 @@ export default function Home() {
         tripInfo,
         receipts: receipts.map((r) => r.data),
         accommodation,
-        mealAllowanceDailyIDR: mealAllowanceDaily,
-        transportAllowanceDailyIDR: transportAllowanceDaily,
+        mealAllowanceDailyIDR: MEAL_DAILY,
+        transportAllowanceDailyIDR: TRANSPORT_DAILY,
         mealAllowanceDailyCNY: 100,
         exchangeRate1: 2300,
         exchangeRate2: 2300,
@@ -250,11 +255,13 @@ export default function Home() {
             <AllowanceSummary
               receipts={receipts}
               tripInfo={tripInfo}
-              mealAllowanceDaily={mealAllowanceDaily}
-              transportAllowanceDaily={transportAllowanceDaily}
+              mealAllowanceDaily={MEAL_DAILY}
+              transportAllowanceDaily={TRANSPORT_DAILY}
               tripType={tripType}
-              onMealChange={setMealAllowanceDaily}
-              onTransportChange={setTransportAllowanceDaily}
+              startDateOverride={startDateOverride}
+              endDateOverride={endDateOverride}
+              onStartDateChange={setStartDateOverride}
+              onEndDateChange={setEndDateOverride}
             />
 
             <ExpenseSummaryTable
