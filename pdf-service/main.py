@@ -59,9 +59,9 @@ def fill_cover(form: dict, out_path: Path):
     active_sheet_name = "差旅费报销明细（境内）" if is_domestic else "差旅费报销明细（境外）"
     hidden_sheet_name = "差旅费报销明细（境外）" if is_domestic else "差旅费报销明细（境内）"
 
-    # Hide the unused sheet so LibreOffice only prints the active one
+    # Delete the unused sheet so LibreOffice only prints the active one
     if hidden_sheet_name in wb.sheetnames:
-        wb[hidden_sheet_name].sheet_state = "hidden"
+        del wb[hidden_sheet_name]
 
     # Set active sheet
     wb.active = wb[active_sheet_name]
