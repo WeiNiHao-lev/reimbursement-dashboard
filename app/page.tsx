@@ -75,6 +75,8 @@ export default function Home() {
         transportAllowanceDailyIDR: TRANSPORT_DAILY,
         mealAllowanceDailyCNY: 100,
         exchangeRate1: 2300, exchangeRate2: 2300, remarks,
+        allowanceStartDate: startDateOverride || undefined,
+        allowanceEndDate: endDateOverride || undefined,
       };
       const fd = new FormData();
       fd.append("form", JSON.stringify(form));

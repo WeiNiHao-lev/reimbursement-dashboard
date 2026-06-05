@@ -29,9 +29,14 @@ export function computeAllowance(form: ReimbursementForm): {
     .filter(Boolean)
     .sort();
 
-  const startDate = allDates[0] || new Date().toISOString().split("T")[0];
-  const endDate = allDates[allDates.length - 1] || startDate;
-  const days = differenceInDays(parseISO(endDate), parseISO(startDate)) + 1;
+  const autoStart = allDates[0] || new Date().toISOString().split("T")[0];
+  const autoEnd = allDates[allDates.length - 1] || autoStart;
+
+  // Use frontend override if provided, otherwise fall back to auto-detected dates
+  const startDate = form.allowanceStartDate || autoStart;
+  const endDate = form.allowanceEndDate || autoEnd;
+  let days = differenceInDays(parseISO(endDate), parseISO(startDate)) + 1;
+  if (days < 1) days = 1;
 
   return {
     startDate,

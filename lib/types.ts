@@ -56,4 +56,6 @@ export interface ReimbursementForm {
   exchangeRate1: number;
   exchangeRate2: number;
   remarks: string;
+  allowanceStartDate?: string; // override from frontend date picker
+  allowanceEndDate?: string;   // override from frontend date picker
 }
