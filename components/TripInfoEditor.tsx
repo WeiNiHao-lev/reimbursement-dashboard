@@ -3,7 +3,7 @@
 import { TripInfo } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, ArrowRight } from "lucide-react";
 
 interface Props {
   rows: TripInfo[];
@@ -25,74 +25,94 @@ export default function TripInfoEditor({ rows, onChange }: Props) {
     onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {rows.map((row, i) => (
-        <div key={i} className="grid grid-cols-[1fr_1fr_1.5fr_1fr_1fr_auto] gap-2 items-center">
-          <div>
-            <p className="text-[10px] text-slate-400 mb-0.5">Depart</p>
-            <Input
-              type="date"
-              value={row.date}
-              onChange={(e) => update(i, { date: e.target.value })}
-              className="h-8 text-xs border-slate-200"
-            />
-          </div>
-          <div>
-            <p className="text-[10px] text-slate-400 mb-0.5">Arrive <span className="text-slate-300">(if diff)</span></p>
-            <Input
-              type="date"
-              value={row.arriveDate || ""}
-              onChange={(e) => update(i, { arriveDate: e.target.value })}
-              className="h-8 text-xs border-slate-200"
-            />
-          </div>
-          <div>
-            <p className="text-[10px] text-slate-400 mb-0.5">Route (From → To)</p>
-            <div className="flex gap-1">
+        <div key={i} className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
+          {/* Row 1: Dates */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <label className="text-[11px] font-medium text-slate-500 block mb-1">Departure Date</label>
               <Input
-                placeholder="From"
+                type="date"
+                value={row.date}
+                onChange={(e) => update(i, { date: e.target.value })}
+                className="h-9 text-sm bg-white border-slate-200"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="text-[11px] font-medium text-slate-500 block mb-1">
+                Arrival Date <span className="text-slate-300 font-normal">(if different)</span>
+              </label>
+              <Input
+                type="date"
+                value={row.arriveDate || ""}
+                onChange={(e) => update(i, { arriveDate: e.target.value })}
+                className="h-9 text-sm bg-white border-slate-200"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="text-[11px] font-medium text-slate-500 block mb-1">Vehicle</label>
+              <select
+                value={row.vehicle}
+                onChange={(e) => update(i, { vehicle: e.target.value })}
+                className="h-9 w-full text-sm border border-slate-200 rounded-md px-3 bg-white text-slate-700"
+              >
+                {VEHICLES.map((v) => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="text-[11px] font-medium text-slate-500 block mb-1">Ticketing</label>
+              <select
+                value={row.ticketingMethod}
+                onChange={(e) => update(i, { ticketingMethod: e.target.value })}
+                className="h-9 w-full text-sm border border-slate-200 rounded-md px-3 bg-white text-slate-700"
+              >
+                {TICKETING.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="pt-5">
+              <Button
+                variant="ghost" size="icon"
+                className="h-9 w-9 text-slate-300 hover:text-red-400 hover:bg-red-50"
+                onClick={() => remove(i)}
+              >
+                <Trash2 size={15} />
+              </Button>
+            </div>
+          </div>
+
+          {/* Row 2: Route */}
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <label className="text-[11px] font-medium text-slate-500 block mb-1">From</label>
+              <Input
+                placeholder="e.g. Jakarta"
                 value={row.origin}
                 onChange={(e) => update(i, { origin: e.target.value })}
-                className="h-8 text-xs border-slate-200"
+                className="h-9 text-sm bg-white border-slate-200"
               />
+            </div>
+            <div className="pt-4 text-slate-300">
+              <ArrowRight size={16} />
+            </div>
+            <div className="flex-1">
+              <label className="text-[11px] font-medium text-slate-500 block mb-1">To</label>
               <Input
-                placeholder="To"
+                placeholder="e.g. Surabaya"
                 value={row.destination}
                 onChange={(e) => update(i, { destination: e.target.value })}
-                className="h-8 text-xs border-slate-200"
+                className="h-9 text-sm bg-white border-slate-200"
               />
             </div>
           </div>
-          <div>
-            <p className="text-[10px] text-slate-400 mb-0.5">Vehicle</p>
-            <select
-              value={row.vehicle}
-              onChange={(e) => update(i, { vehicle: e.target.value })}
-              className="h-8 w-full text-xs border border-slate-200 rounded px-2 bg-white"
-            >
-              {VEHICLES.map((v) => <option key={v} value={v}>{v}</option>)}
-            </select>
-          </div>
-          <div>
-            <p className="text-[10px] text-slate-400 mb-0.5">Ticketing</p>
-            <select
-              value={row.ticketingMethod}
-              onChange={(e) => update(i, { ticketingMethod: e.target.value })}
-              className="h-8 w-full text-xs border border-slate-200 rounded px-2 bg-white"
-            >
-              {TICKETING.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          <div className="pt-4">
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-red-400" onClick={() => remove(i)}>
-              <Trash2 size={14} />
-            </Button>
-          </div>
         </div>
       ))}
-      <Button variant="outline" size="sm"
+
+      <Button
+        variant="outline" size="sm"
         className="text-xs gap-1.5 border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
-        onClick={add}>
+        onClick={add}
+      >
         <Plus size={12} /> Add Route
       </Button>
     </div>
