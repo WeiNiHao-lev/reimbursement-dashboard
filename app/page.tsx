@@ -25,9 +25,9 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 export default function Home() {
   const [tripType, setTripType] = useState<"domestic" | "overseas">("domestic");
-  const [employeeName, setEmployeeName] = useState("Daffa Khairi");
+  const [employeeName, setEmployeeName] = useState("");
   const [department, setDepartment] = useState("Marketing Department");
-  const [residence, setResidence] = useState("Jakarta");
+  const [residence, setResidence] = useState("");
   const [purpose, setPurpose] = useState("");
   const [month, setMonth] = useState(() =>
     new Date().toLocaleDateString("id-ID", { month: "long", year: "numeric" })

@@ -67,6 +67,32 @@ def fill_cover(form: dict, out_path: Path):
     wb.active = wb[active_sheet_name]
     ws = wb.active
 
+    # Clear existing template data
+    # Employee info
+    ws["A3"] = f"员工姓名(Name)：{form.get('employeeName', '')}"
+    ws["C3"] = f"部门(Apartment)：{form.get('department', '')}"
+    ws["A4"] = f"常驻地(Permanent Residence)：{form.get('permanentResidence', '')}"
+
+    # Clear trip info rows 7-9
+    for row in range(7, 10):
+        for col in ["A", "B", "C", "D"]:
+            ws[f"{col}{row}"] = None
+
+    # Clear transportation rows 13-20
+    for row in range(13, 21):
+        for col in ["A", "B", "C", "D"]:
+            ws[f"{col}{row}"] = None
+
+    # Clear accommodation rows 23-25
+    for row in range(23, 26):
+        for col in ["A", "B", "C"]:
+            ws[f"{col}{row}"] = None
+
+    # Clear allowance rows 29-30
+    for row in range(29, 31):
+        for col in ["A", "B", "C", "D"]:
+            ws[f"{col}{row}"] = None
+
     # Purpose
     ws["C4"] = f"出差事由(Purpose of Business Trip): {form.get('purpose', '')}"
 
@@ -185,8 +211,14 @@ def fill_summary(form: dict, out_path: Path):
     ws.page_setup.fitToHeight = 0
     ws.page_margins = PageMargins(left=0.5, right=0.5, top=0.75, bottom=0.75)
 
-    # Project number, form number
+    # Header info
+    ws["B2"] = form.get("department", "")
     ws["F2"] = form.get("month", "")
+
+    # Clear all existing data rows (4–12) from the template first
+    for row in range(4, 13):
+        for col in ["A", "B", "C", "D", "E", "F", "G", "H"]:
+            ws[f"{col}{row}"] = None
 
     receipts = sorted(form.get("receipts", []), key=lambda r: r.get("date", ""))
     category_label = {
@@ -228,6 +260,7 @@ def fill_summary(form: dict, out_path: Path):
 
     # Preparer
     ws["G16"] = f"制表人: {form.get('employeeName', '')}"
+    ws["H16"] = "审核人:"
 
     wb.save(out_path)
 
