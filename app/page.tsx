@@ -203,9 +203,8 @@ export default function Home() {
             {/* Receipts */}
             <Card className="border-slate-200 shadow-sm">
               <CardHeader className="pb-2 pt-4 px-5">
-                <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <CardTitle className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
                   Upload Receipts
-                  <span className="normal-case font-normal text-slate-400">— AI extracts data automatically</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-5 pb-4">

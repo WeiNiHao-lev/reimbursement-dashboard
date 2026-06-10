@@ -200,6 +200,18 @@ export default function ReceiptDropzone({ onChange }: Props) {
                           </SelectContent>
                         </Select>
                       </div>
+                      {/* Vendor — show for transport categories */}
+                      {(item.data.category === "transportation_urban" || item.data.category === "transportation_intercity") && (
+                        <div className="col-span-2">
+                          <label className="text-xs text-gray-500">Vendor / Brand <span className="text-gray-400 font-normal">(e.g. Blue Bird, Grab)</span></label>
+                          <Input
+                            value={item.data.vendor || ""}
+                            onChange={(e) => update(item.id, { vendor: e.target.value })}
+                            className="h-7 text-xs mt-0.5"
+                            placeholder="e.g. Blue Bird"
+                          />
+                        </div>
+                      )}
                       <div>
                         <label className="text-xs text-gray-500">From</label>
                         <Input
@@ -219,11 +231,12 @@ export default function ReceiptDropzone({ onChange }: Props) {
                         />
                       </div>
                       <div className="col-span-2">
-                        <label className="text-xs text-gray-500">Description</label>
+                        <label className="text-xs text-gray-500">Reason / Notes <span className="text-gray-400 font-normal">(e.g. Prepare to flight back)</span></label>
                         <Input
                           value={item.data.description || ""}
                           onChange={(e) => update(item.id, { description: e.target.value })}
                           className="h-7 text-xs mt-0.5"
+                          placeholder="e.g. Prepare to flight back"
                         />
                       </div>
                     </div>

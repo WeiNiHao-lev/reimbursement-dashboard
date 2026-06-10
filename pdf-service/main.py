@@ -243,16 +243,20 @@ def fill_summary(form: dict, out_path: Path):
         vendor = r.get("vendor", "")
         origin = r.get("origin", "").split(",")[0].strip()
         dest = r.get("destination", "").split(",")[0].strip()
-        route_str = f"{origin} -> {dest}" if (origin or dest) else ""
+        reason = r.get("description", "").strip()
+        route_str = f"{origin} - {dest}" if (origin or dest) else ""
+        # Build: "Blue Bird (Grand Inna Hotel - Juanda Airport); Prepare to flight back"
         if vendor and route_str:
-            note = f"{vendor}: {route_str}"
+            note = f"{vendor} ({route_str})"
         elif vendor:
             note = vendor
         elif route_str:
             note = route_str
         else:
-            note = r.get("description", "")
-        ws[f"H{row}"] = note[:80]
+            note = ""
+        if reason:
+            note = f"{note}; {reason}" if note else reason
+        ws[f"H{row}"] = note[:100]
 
     # Update total formula range
     last_row = 4 + len(receipts) - 1 if receipts else 4
