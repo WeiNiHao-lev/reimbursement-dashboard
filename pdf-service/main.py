@@ -1,3 +1,4 @@
+import copy
 import os
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 import openpyxl
+from openpyxl.styles import Alignment
 from PyPDF2 import PdfMerger
 from PIL import Image
 from reportlab.lib.pagesizes import A4
@@ -48,9 +50,39 @@ def excel_to_pdf(xlsx_path: Path, out_dir: Path) -> Path:
     subprocess.run(
         [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(xlsx_path)],
         check=True, capture_output=True, timeout=60,
-        env={**os.environ, "HOME": str(out_dir)}  # avoid lock file issues
+        env={**os.environ, "HOME": str(out_dir)}
     )
     return out_dir / (xlsx_path.stem + ".pdf")
+
+
+def _copy_row_style(ws, src_row: int, dst_row: int):
+    """Copy cell styles and row height from src_row to dst_row."""
+    for col in range(1, ws.max_column + 1):
+        src_cell = ws.cell(src_row, col)
+        dst_cell = ws.cell(dst_row, col)
+        if src_cell.has_style:
+            dst_cell.font = copy.copy(src_cell.font)
+            dst_cell.border = copy.copy(src_cell.border)
+            dst_cell.fill = copy.copy(src_cell.fill)
+            dst_cell.number_format = src_cell.number_format
+            dst_cell.protection = copy.copy(src_cell.protection)
+            dst_cell.alignment = copy.copy(src_cell.alignment)
+    if src_row in ws.row_dimensions:
+        ws.row_dimensions[dst_row].height = ws.row_dimensions[src_row].height
+
+
+def _set_wrap(ws, row: int, col: str, value, auto_height: bool = True):
+    """Write value to cell with wrap_text enabled."""
+    cell = ws[f"{col}{row}"]
+    cell.value = value
+    existing = cell.alignment
+    cell.alignment = Alignment(
+        wrap_text=True,
+        horizontal=existing.horizontal if existing else None,
+        vertical=existing.vertical if existing else "center",
+    )
+    if auto_height:
+        ws.row_dimensions[row].height = None  # auto
 
 
 def fill_cover(form: dict, out_path: Path):
@@ -59,64 +91,17 @@ def fill_cover(form: dict, out_path: Path):
     active_sheet_name = "差旅费报销明细（境内）" if is_domestic else "差旅费报销明细（境外）"
     hidden_sheet_name = "差旅费报销明细（境外）" if is_domestic else "差旅费报销明细（境内）"
 
-    # Delete the unused sheet so LibreOffice only prints the active one
     if hidden_sheet_name in wb.sheetnames:
         del wb[hidden_sheet_name]
 
-    # Set active sheet
     wb.active = wb[active_sheet_name]
     ws = wb.active
 
-    # Clear existing template data
-    # Employee info
-    ws["A3"] = f"员工姓名(Name)：{form.get('employeeName', '')}"
-    ws["C3"] = f"部门(Apartment)：{form.get('department', '')}"
-    ws["A4"] = f"常驻地(Permanent Residence)：{form.get('permanentResidence', '')}"
-
-    # Clear trip info rows 7-9
-    for row in range(7, 10):
-        for col in ["A", "B", "C", "D"]:
-            ws[f"{col}{row}"] = None
-
-    # Clear transportation rows 13-20
-    for row in range(13, 21):
-        for col in ["A", "B", "C", "D"]:
-            ws[f"{col}{row}"] = None
-
-    # Clear accommodation rows 23-25
-    for row in range(23, 26):
-        for col in ["A", "B", "C"]:
-            ws[f"{col}{row}"] = None
-
-    # Clear allowance rows 29-30
-    for row in range(29, 31):
-        for col in ["A", "B", "C", "D"]:
-            ws[f"{col}{row}"] = None
-
-    # Purpose
-    ws["C4"] = f"出差事由(Purpose of Business Trip): {form.get('purpose', '')}"
-
-    # Trip info rows (starting row 7)
-    # Date cell: "07-May-2026" if same day, "07-May-2026 - 09-May-2026" if different
+    # ── Compute all data first so we know how many rows are needed ──────────
     trip_info = form.get("tripInfo", [])
-    for i, t in enumerate(trip_info[:3]):
-        row = 7 + i
-        depart = t.get("date", "")
-        arrive = t.get("arriveDate", "") or ""
-        # Build date string
-        try:
-            d1_str = datetime.fromisoformat(depart).strftime("%d-%b-%Y") if depart else ""
-            d2_str = datetime.fromisoformat(arrive).strftime("%d-%b-%Y") if arrive and arrive != depart else ""
-            date_str = f"{d1_str} - {d2_str}" if d2_str else d1_str
-        except Exception:
-            date_str = depart
-        ws[f"A{row}"] = date_str
-        ws[f"B{row}"] = f"{t.get('origin', '')} - {t.get('destination', '')}"
-        ws[f"C{row}"] = t.get("vehicle", "")
-        ws[f"D{row}"] = t.get("ticketingMethod", "")
-
-    # Transportation expenses — group by full route (origin - destination)
+    accommodation = form.get("accommodation", [])
     receipts = form.get("receipts", [])
+
     urban_by_route: dict = {}
     intercity_by_route: dict = {}
     for r in receipts:
@@ -130,65 +115,137 @@ def fill_cover(form: dict, out_path: Path):
         elif r.get("category") == "transportation_intercity":
             intercity_by_route[route] = intercity_by_route.get(route, 0) + r.get("amount", 0)
 
-    all_keys = list(dict.fromkeys(list(urban_by_route.keys()) + list(intercity_by_route.keys())))
-    for i, key in enumerate(all_keys[:6]):
-        row = 13 + i
-        ws[f"A{row}"] = key
+    all_transport_keys = list(dict.fromkeys(list(urban_by_route.keys()) + list(intercity_by_route.keys())))
+
+    # ── Template section capacities (row numbers in original template) ───────
+    TRIP_START = 7;       TRIP_CAP = 3      # rows 7-9
+    TRANSPORT_START = 13; TRANSPORT_CAP = 8  # rows 13-20
+    ACCOM_START = 23;     ACCOM_CAP = 3      # rows 23-25
+    ALLOWANCE_START = 29                      # rows 29-30
+
+    extra_trip      = max(0, len(trip_info) - TRIP_CAP)
+    extra_transport = max(0, len(all_transport_keys) - TRANSPORT_CAP)
+    extra_accom     = max(0, len(accommodation) - ACCOM_CAP)
+
+    # ── Insert extra rows from BOTTOM to TOP so earlier row numbers stay valid
+    # Accommodation
+    if extra_accom > 0:
+        insert_at = ACCOM_START + ACCOM_CAP   # after last template accom row
+        ws.insert_rows(insert_at, extra_accom)
+        for i in range(extra_accom):
+            _copy_row_style(ws, insert_at - 1, insert_at + i)
+
+    # Transportation (use original row numbers; accom shift doesn't affect these)
+    if extra_transport > 0:
+        insert_at = TRANSPORT_START + TRANSPORT_CAP
+        ws.insert_rows(insert_at, extra_transport)
+        for i in range(extra_transport):
+            _copy_row_style(ws, insert_at - 1, insert_at + i)
+
+    # Trip info
+    if extra_trip > 0:
+        insert_at = TRIP_START + TRIP_CAP
+        ws.insert_rows(insert_at, extra_trip)
+        for i in range(extra_trip):
+            _copy_row_style(ws, insert_at - 1, insert_at + i)
+
+    # ── Recalculate actual start rows after all insertions ───────────────────
+    trip_start_r      = TRIP_START
+    transport_start_r = TRANSPORT_START + extra_trip
+    accom_start_r     = ACCOM_START + extra_trip + extra_transport
+    allowance_start_r = ALLOWANCE_START + extra_trip + extra_transport + extra_accom
+
+    # ── Clear old template data in the (now possibly larger) sections ────────
+    for row in range(trip_start_r, trip_start_r + max(TRIP_CAP, len(trip_info))):
+        for col in ["A", "B", "C", "D"]:
+            ws[f"{col}{row}"] = None
+
+    for row in range(transport_start_r, transport_start_r + max(TRANSPORT_CAP, len(all_transport_keys))):
+        for col in ["A", "B", "C", "D"]:
+            ws[f"{col}{row}"] = None
+
+    for row in range(accom_start_r, accom_start_r + max(ACCOM_CAP, len(accommodation))):
+        for col in ["A", "B", "C"]:
+            ws[f"{col}{row}"] = None
+
+    for row in range(allowance_start_r, allowance_start_r + 2):
+        for col in ["A", "B", "C", "D"]:
+            ws[f"{col}{row}"] = None
+
+    # ── Header fields ─────────────────────────────────────────────────────────
+    ws["A3"] = f"员工姓名(Name)：{form.get('employeeName', '')}"
+    ws["C3"] = f"部门(Apartment)：{form.get('department', '')}"
+    ws["A4"] = f"常驻地(Permanent Residence)：{form.get('permanentResidence', '')}"
+    ws["C4"] = f"出差事由(Purpose of Business Trip): {form.get('purpose', '')}"
+
+    # ── Trip info ─────────────────────────────────────────────────────────────
+    for i, t in enumerate(trip_info):
+        row = trip_start_r + i
+        depart = t.get("date", "")
+        arrive = t.get("arriveDate", "") or ""
+        try:
+            d1_str = datetime.fromisoformat(depart).strftime("%d-%b-%Y") if depart else ""
+            d2_str = datetime.fromisoformat(arrive).strftime("%d-%b-%Y") if arrive and arrive != depart else ""
+            date_str = f"{d1_str} - {d2_str}" if d2_str else d1_str
+        except Exception:
+            date_str = depart
+        ws[f"A{row}"] = date_str
+        _set_wrap(ws, row, "B", f"{t.get('origin', '')} - {t.get('destination', '')}")
+        ws[f"C{row}"] = t.get("vehicle", "")
+        ws[f"D{row}"] = t.get("ticketingMethod", "")
+
+    # ── Transportation ────────────────────────────────────────────────────────
+    for i, key in enumerate(all_transport_keys):
+        row = transport_start_r + i
+        _set_wrap(ws, row, "A", key)
         ws[f"B{row}"] = intercity_by_route.get(key, 0) or 0
         ws[f"C{row}"] = urban_by_route.get(key, 0) or 0
         ws[f"D{row}"] = f"=B{row}+C{row}"
 
-    # Accommodation
-    for r in ws.merged_cells.ranges:
-        pass  # just ensure merges stay intact
-    accommodation = form.get("accommodation", [])
-    ws["A23"] = None
-    ws["B23"] = None
-    ws["C23"] = None
-    for i, a in enumerate(accommodation[:3]):
-        row = 23 + i
+    # ── Accommodation ─────────────────────────────────────────────────────────
+    for i, a in enumerate(accommodation):
+        row = accom_start_r + i
         ws[f"A{row}"] = a.get("location", "")
         ws[f"B{row}"] = a.get("days", 0)
         ws[f"C{row}"] = a.get("amount", 0)
 
-    # Allowance — use override dates if provided, else auto-detect from receipts/tripInfo
+    # ── Allowance ─────────────────────────────────────────────────────────────
     start_date = form.get("allowanceStartDate") or ""
-    end_date = form.get("allowanceEndDate") or ""
-    daily = form.get("mealAllowanceDailyIDR", 200000)
+    end_date   = form.get("allowanceEndDate") or ""
+    daily      = form.get("mealAllowanceDailyIDR", 200000)
 
     if not start_date or not end_date:
-        all_dates = sorted([
-            r.get("date", "") for r in form.get("receipts", [])
-        ] + [
-            t.get("date", "") for t in form.get("tripInfo", [])
-        ])
+        all_dates = sorted(
+            [r.get("date", "") for r in form.get("receipts", [])] +
+            [t.get("date", "") for t in form.get("tripInfo", [])]
+        )
         all_dates = [d for d in all_dates if d]
         if all_dates:
             start_date = start_date or all_dates[0]
-            end_date = end_date or all_dates[-1]
+            end_date   = end_date or all_dates[-1]
 
+    r_allow = allowance_start_r
     if start_date:
         try:
-            ws["A29"] = datetime.fromisoformat(start_date)
-            ws["A29"].number_format = "DD-MMM-YYYY"
+            ws[f"A{r_allow}"] = datetime.fromisoformat(start_date)
+            ws[f"A{r_allow}"].number_format = "DD-MMM-YYYY"
         except Exception:
-            ws["A29"] = start_date
+            ws[f"A{r_allow}"] = start_date
 
     if end_date:
         try:
-            ws["B29"] = datetime.fromisoformat(end_date)
-            ws["B29"].number_format = "DD-MMM-YYYY"
+            ws[f"B{r_allow}"] = datetime.fromisoformat(end_date)
+            ws[f"B{r_allow}"].number_format = "DD-MMM-YYYY"
         except Exception:
-            ws["B29"] = end_date
+            ws[f"B{r_allow}"] = end_date
 
-    # Days and amount — always compute if we have both dates
     if start_date and end_date:
         try:
             d1 = datetime.fromisoformat(start_date)
             d2 = datetime.fromisoformat(end_date)
             days = max((d2 - d1).days + 1, 1)
-            ws["C29"] = days
-            ws["D29"] = days * daily
+            ws[f"C{r_allow}"] = days
+            ws[f"D{r_allow}"] = days * daily
         except Exception:
             pass
 
@@ -199,13 +256,12 @@ def fill_summary(form: dict, out_path: Path):
     wb = openpyxl.load_workbook(SUMMARY_TEMPLATE)
     ws = wb.active
 
-    # Fix page setup: fit all columns on one page, A4 landscape
-    from openpyxl.worksheet.page import PageMargins, PrintPageSetup
+    from openpyxl.worksheet.page import PageMargins
     from openpyxl.worksheet.properties import WorksheetProperties, PageSetupProperties
     if ws.sheet_properties is None:
         ws.sheet_properties = WorksheetProperties()
     ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    ws.page_setup.paperSize = 9  # A4
+    ws.page_setup.paperSize = 9
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
@@ -215,12 +271,30 @@ def fill_summary(form: dict, out_path: Path):
     ws["B2"] = form.get("department", "")
     ws["F2"] = form.get("month", "")
 
-    # Clear all existing data rows (4–12) from the template first
-    for row in range(4, 13):
+    receipts = sorted(form.get("receipts", []), key=lambda r: r.get("date", ""))
+
+    # ── Expand rows if more receipts than template capacity (9 rows: 4-12) ───
+    RECEIPT_START = 4
+    RECEIPT_CAP = 9   # rows 4-12
+    TOTAL_ROW_ORIG = 13
+    PREPARER_ROW_ORIG = 16
+
+    extra_receipts = max(0, len(receipts) - RECEIPT_CAP)
+
+    if extra_receipts > 0:
+        insert_at = RECEIPT_START + RECEIPT_CAP  # row 13 originally
+        ws.insert_rows(insert_at, extra_receipts)
+        for i in range(extra_receipts):
+            _copy_row_style(ws, insert_at - 1, insert_at + i)
+
+    total_row     = TOTAL_ROW_ORIG + extra_receipts
+    preparer_row  = PREPARER_ROW_ORIG + extra_receipts
+
+    # Clear all data rows
+    for row in range(RECEIPT_START, RECEIPT_START + max(RECEIPT_CAP, len(receipts))):
         for col in ["A", "B", "C", "D", "E", "F", "G", "H"]:
             ws[f"{col}{row}"] = None
 
-    receipts = sorted(form.get("receipts", []), key=lambda r: r.get("date", ""))
     category_label = {
         "transportation_intercity": "交通费(城市间)",
         "transportation_urban": "交通费(市内)",
@@ -229,7 +303,7 @@ def fill_summary(form: dict, out_path: Path):
     }
 
     for i, r in enumerate(receipts):
-        row = 4 + i
+        row = RECEIPT_START + i
         ws[f"A{row}"] = i + 1
         ws[f"B{row}"] = form.get("employeeName", "")
         try:
@@ -240,12 +314,13 @@ def fill_summary(form: dict, out_path: Path):
         ws[f"D{row}"] = category_label.get(r.get("category", ""), r.get("category", ""))
         ws[f"E{row}"] = r.get("currency", "IDR")
         ws[f"F{row}"] = r.get("amount", 0)
-        vendor = r.get("vendor", "")
-        origin = r.get("origin", "").split(",")[0].strip()
-        dest = r.get("destination", "").split(",")[0].strip()
-        reason = r.get("description", "").strip()
+
+        vendor    = r.get("vendor", "")
+        origin    = r.get("origin", "").split(",")[0].strip()
+        dest      = r.get("destination", "").split(",")[0].strip()
+        reason    = r.get("description", "").strip()
         route_str = f"{origin} - {dest}" if (origin or dest) else ""
-        # Build: "Blue Bird (Grand Inna Hotel - Juanda Airport); Prepare to flight back"
+
         if vendor and route_str:
             note = f"{vendor} ({route_str})"
         elif vendor:
@@ -256,15 +331,17 @@ def fill_summary(form: dict, out_path: Path):
             note = ""
         if reason:
             note = f"{note}; {reason}" if note else reason
-        ws[f"H{row}"] = note[:100]
 
-    # Update total formula range
-    last_row = 4 + len(receipts) - 1 if receipts else 4
-    ws["F13"] = f"=SUM(F4:F{last_row})"
+        # Write remarks with wrap_text so long text is not clipped
+        _set_wrap(ws, row, "H", note)
+
+    # Total formula
+    last_data_row = RECEIPT_START + len(receipts) - 1 if receipts else RECEIPT_START
+    ws[f"F{total_row}"] = f"=SUM(F{RECEIPT_START}:F{last_data_row})"
 
     # Preparer
-    ws["G16"] = f"制表人: {form.get('employeeName', '')}"
-    ws["H16"] = "审核人:"
+    ws[f"G{preparer_row}"] = f"制表人: {form.get('employeeName', '')}"
+    ws[f"H{preparer_row}"] = "审核人:"
 
     wb.save(out_path)
 
@@ -298,17 +375,14 @@ async def generate_pdf(
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
 
-        # 1. Fill Excel templates
         cover_xlsx = tmp / "cover.xlsx"
         summary_xlsx = tmp / "summary.xlsx"
         fill_cover(form_data, cover_xlsx)
         fill_summary(form_data, summary_xlsx)
 
-        # 2. Convert Excel to PDF
         cover_pdf = excel_to_pdf(cover_xlsx, tmp)
         summary_pdf = excel_to_pdf(summary_xlsx, tmp)
 
-        # 3. Save receipt files and convert images to PDF
         receipt_pdfs = []
         for i, upload in enumerate(files):
             ext = Path(upload.filename or "file").suffix.lower()
@@ -323,7 +397,6 @@ async def generate_pdf(
             elif ext == ".pdf":
                 receipt_pdfs.append(raw_path)
 
-        # 4. Merge all PDFs
         merger = PdfMerger()
         merger.append(str(cover_pdf))
         merger.append(str(summary_pdf))
