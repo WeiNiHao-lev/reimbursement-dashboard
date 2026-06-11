@@ -116,10 +116,14 @@ def _insert_rows_safe(ws, at: int, count: int, style_src: int):
             except Exception: pass
 
     # ── B) Fix shifted merges: remove stale strings, re-add shifted ──────────
-    # Two-pass to avoid conflicts between old and new coordinate ranges.
+    # CRITICAL: use ws.merged_cells.remove() NOT ws.unmerge_cells().
+    # unmerge_cells() calls del self._cells[(row,col)] on every slave,
+    # destroying the cell objects (and their border styles) that insert_rows
+    # physically moved into those positions. merged_cells.remove() only
+    # removes the range string from the collection — no cell deletion.
     for r0, r1, c0, c1 in shifting:
         c0l, c1l = get_column_letter(c0), get_column_letter(c1)
-        try: ws.unmerge_cells(f"{c0l}{r0}:{c1l}{r1}")
+        try: ws.merged_cells.remove(f"{c0l}{r0}:{c1l}{r1}")
         except Exception: pass
     for r0, r1, c0, c1 in shifting:
         c0l, c1l = get_column_letter(c0), get_column_letter(c1)
