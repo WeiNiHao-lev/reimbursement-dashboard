@@ -30,7 +30,7 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-# ── LibreOffice helpers ───────────────────────────────────────────────────────
+# ── LibreOffice ───────────────────────────────────────────────────────────────
 
 def find_soffice() -> Optional[str]:
     for path in ["/usr/bin/soffice", "/usr/lib/libreoffice/program/soffice", shutil.which("soffice")]:
@@ -51,10 +51,17 @@ def excel_to_pdf(xlsx_path: Path, out_dir: Path) -> Path:
     return out_dir / (xlsx_path.stem + ".pdf")
 
 
-# ── openpyxl cell helpers ─────────────────────────────────────────────────────
+# ── openpyxl helpers ──────────────────────────────────────────────────────────
+
+def _unmerge_row(ws, row: int):
+    """Remove every merged range that touches this row so all cells are writable."""
+    to_remove = [str(m) for m in list(ws.merged_cells.ranges) if m.min_row <= row <= m.max_row]
+    for m in to_remove:
+        ws.unmerge_cells(m)
+
 
 def _copy_row_style(ws, src_row: int, dst_row: int):
-    """Copy styles + row height from src_row to dst_row (skip merge slaves)."""
+    """Copy styles + row height from src_row to dst_row (skipping merge slaves)."""
     for col_idx in range(1, ws.max_column + 1):
         src = ws.cell(src_row, col_idx)
         dst = ws.cell(dst_row, col_idx)
@@ -71,15 +78,21 @@ def _copy_row_style(ws, src_row: int, dst_row: int):
         ws.row_dimensions[dst_row].height = ws.row_dimensions[src_row].height
 
 
-def _unmerge_row(ws, row: int):
-    """Remove every merged range that touches this row, so the cells are writable."""
-    to_remove = [str(m) for m in list(ws.merged_cells.ranges) if m.min_row <= row <= m.max_row]
-    for m in to_remove:
-        ws.unmerge_cells(m)
+def _insert_rows_styled(ws, after_row: int, count: int):
+    """
+    Insert `count` rows after `after_row`, copy style from the row above.
+    Order: unmerge FIRST, then copy style — ensures merge slaves are already
+    freed before the style copy runs, so alignment/border are captured correctly.
+    """
+    at = after_row + 1
+    ws.insert_rows(at, count)
+    for i in range(count):
+        _unmerge_row(ws, at + i)          # ① free cells from any extended merges
+        _copy_row_style(ws, after_row, at + i)  # ② now copy style cleanly
 
 
 def _wc(ws, row: int, col: str, value, wrap: bool = False):
-    """Write value to a cell safely (skip MergedCell slaves; optionally wrap_text)."""
+    """Write value to cell, skip MergedCell slaves, optionally enable wrap_text."""
     cell = ws[f"{col}{row}"]
     if isinstance(cell, MergedCell):
         return
@@ -89,11 +102,23 @@ def _wc(ws, row: int, col: str, value, wrap: bool = False):
             al = cell.alignment
             cell.alignment = Alignment(
                 wrap_text=True,
-                horizontal=al.horizontal if al else None,
+                horizontal=al.horizontal if al else "center",
                 vertical=al.vertical   if al else "center",
             )
         except Exception:
             pass
+
+
+def _clear_print_area(ws):
+    """Remove the template's fixed print area so LibreOffice includes all rows."""
+    try:
+        del ws.defined_names["Print_Area"]
+    except (KeyError, Exception):
+        pass
+    try:
+        del ws.defined_names["_xlnm.Print_Area"]
+    except (KeyError, Exception):
+        pass
 
 
 # ── Cover page ────────────────────────────────────────────────────────────────
@@ -110,17 +135,7 @@ def fill_cover(form: dict, out_path: Path):
     wb.active = wb[active_name]
     ws = wb.active
 
-    # ── Scale everything to fit on 1 A4 page ─────────────────────────────────
-    if ws.sheet_properties is None:
-        ws.sheet_properties = WorksheetProperties()
-    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    ws.page_setup.paperSize    = 9          # A4
-    ws.page_setup.orientation  = "portrait"
-    ws.page_setup.fitToWidth   = 1
-    ws.page_setup.fitToHeight  = 1          # scale down so all rows fit on 1 page
-    ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.5, bottom=0.5)
-
-    # ── Collect data ──────────────────────────────────────────────────────────
+    # ── Collect data first so we know how many extra rows are needed ──────────
     trip_info     = form.get("tripInfo", [])
     accommodation = form.get("accommodation", [])
     receipts      = form.get("receipts", [])
@@ -140,40 +155,46 @@ def fill_cover(form: dict, out_path: Path):
 
     all_transport = list(dict.fromkeys(list(urban_by_route) + list(intercity_by_route)))
 
-    # ── Original template section positions ───────────────────────────────────
     TRIP_R0  = 7;  TRIP_CAP  = 3   # rows  7–9
     TRNS_R0  = 13; TRNS_CAP  = 8   # rows 13–20
     ACCOM_R0 = 23; ACCOM_CAP = 3   # rows 23–25
-    ALLOW_R0 = 29                   # rows 29–30
+    ALLOW_R0 = 29
 
     extra_trip  = max(0, len(trip_info)     - TRIP_CAP)
     extra_trns  = max(0, len(all_transport) - TRNS_CAP)
     extra_accom = max(0, len(accommodation) - ACCOM_CAP)
 
-    # ── Insert extra rows bottom → top (so earlier row numbers stay stable) ──
-    # Accommodation
+    # ── Clear template's fixed print area (causes bottom border to disappear) ─
+    _clear_print_area(ws)
+
+    # ── Page setup ────────────────────────────────────────────────────────────
+    if ws.sheet_properties is None:
+        ws.sheet_properties = WorksheetProperties()
+
+    has_overflow = extra_trip > 0 or extra_trns > 0 or extra_accom > 0
+
+    if has_overflow:
+        # Scale down to fit all rows on 1 page — only applied when content overflows
+        ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+        ws.page_setup.fitToWidth  = 1
+        ws.page_setup.fitToHeight = 1
+    else:
+        ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=False)
+        ws.page_setup.scale = 100
+
+    ws.page_setup.paperSize   = 9   # A4
+    ws.page_setup.orientation = "portrait"
+    ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.5, bottom=0.5)
+
+    # ── Insert extra rows bottom → top ────────────────────────────────────────
     if extra_accom > 0:
-        at = ACCOM_R0 + ACCOM_CAP
-        ws.insert_rows(at, extra_accom)
-        for i in range(extra_accom):
-            _copy_row_style(ws, at - 1, at + i)
-            _unmerge_row(ws, at + i)   # ← ensure cells are individually writable
+        _insert_rows_styled(ws, ACCOM_R0 + ACCOM_CAP - 1, extra_accom)
 
-    # Transportation
     if extra_trns > 0:
-        at = TRNS_R0 + TRNS_CAP
-        ws.insert_rows(at, extra_trns)
-        for i in range(extra_trns):
-            _copy_row_style(ws, at - 1, at + i)
-            _unmerge_row(ws, at + i)
+        _insert_rows_styled(ws, TRNS_R0 + TRNS_CAP - 1, extra_trns)
 
-    # Trip info
     if extra_trip > 0:
-        at = TRIP_R0 + TRIP_CAP
-        ws.insert_rows(at, extra_trip)
-        for i in range(extra_trip):
-            _copy_row_style(ws, at - 1, at + i)
-            _unmerge_row(ws, at + i)
+        _insert_rows_styled(ws, TRIP_R0 + TRIP_CAP - 1, extra_trip)
 
     # ── Recalculate section starts after insertions ───────────────────────────
     trns_r  = TRNS_R0  + extra_trip
@@ -182,17 +203,13 @@ def fill_cover(form: dict, out_path: Path):
 
     # ── Clear old template data ───────────────────────────────────────────────
     for row in range(TRIP_R0, TRIP_R0 + max(TRIP_CAP, len(trip_info))):
-        for c in ["A", "B", "C", "D"]:
-            _wc(ws, row, c, None)
-    for row in range(trns_r, trns_r + max(TRNS_CAP, len(all_transport))):
-        for c in ["A", "B", "C", "D"]:
-            _wc(ws, row, c, None)
+        for c in ["A","B","C","D"]: _wc(ws, row, c, None)
+    for row in range(trns_r,  trns_r  + max(TRNS_CAP,  len(all_transport))):
+        for c in ["A","B","C","D"]: _wc(ws, row, c, None)
     for row in range(accom_r, accom_r + max(ACCOM_CAP, len(accommodation))):
-        for c in ["A", "B", "C"]:
-            _wc(ws, row, c, None)
+        for c in ["A","B","C"]: _wc(ws, row, c, None)
     for row in range(allow_r, allow_r + 2):
-        for c in ["A", "B", "C", "D"]:
-            _wc(ws, row, c, None)
+        for c in ["A","B","C","D"]: _wc(ws, row, c, None)
 
     # ── Header ────────────────────────────────────────────────────────────────
     _wc(ws, 3, "A", f"员工姓名(Name)：{form.get('employeeName', '')}")
@@ -212,9 +229,18 @@ def fill_cover(form: dict, out_path: Path):
         except Exception:
             date_str = depart
         _wc(ws, row, "A", date_str)
-        _wc(ws, row, "B", f"{t.get('origin', '')} - {t.get('destination', '')}", wrap=True)
+        _wc(ws, row, "B", f"{t.get('origin','')} - {t.get('destination','')}", wrap=True)
         _wc(ws, row, "C", t.get("vehicle", ""))
         _wc(ws, row, "D", t.get("ticketingMethod", ""))
+        # Explicitly enforce center alignment for ALL trip rows (template + inserted)
+        for col in ["A", "B", "C", "D"]:
+            cell = ws[f"{col}{row}"]
+            if not isinstance(cell, MergedCell) and cell.value is not None:
+                cell.alignment = Alignment(
+                    horizontal="center",
+                    vertical="center",
+                    wrap_text=(col == "B"),
+                )
 
     # ── Transportation ────────────────────────────────────────────────────────
     for i, key in enumerate(all_transport):
@@ -279,39 +305,33 @@ def fill_summary(form: dict, out_path: Path):
     wb = openpyxl.load_workbook(SUMMARY_TEMPLATE)
     ws = wb.active
 
-    # Page setup
+    _clear_print_area(ws)
+
     if ws.sheet_properties is None:
         ws.sheet_properties = WorksheetProperties()
     ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    ws.page_setup.paperSize   = 9           # A4
+    ws.page_setup.paperSize   = 9
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth  = 1
-    ws.page_setup.fitToHeight = 0           # allow extra pages if many receipts
+    ws.page_setup.fitToHeight = 0   # allow extra pages for many receipts
     ws.page_margins = PageMargins(left=0.5, right=0.5, top=0.75, bottom=0.75)
 
-    # Header
     ws["B2"] = form.get("department", "")
     ws["F2"] = form.get("month", "")
 
     receipts = sorted(form.get("receipts", []), key=lambda r: r.get("date", ""))
 
-    # ── Expand rows if more receipts than template capacity ───────────────────
-    RECV_R0  = 4;  RECV_CAP = 9   # rows 4–12
+    RECV_R0  = 4;  RECV_CAP = 9
     TOTAL_R0 = 13
     PREP_R0  = 16
 
     extra_recv = max(0, len(receipts) - RECV_CAP)
     if extra_recv > 0:
-        at = RECV_R0 + RECV_CAP
-        ws.insert_rows(at, extra_recv)
-        for i in range(extra_recv):
-            _copy_row_style(ws, at - 1, at + i)
-            _unmerge_row(ws, at + i)
+        _insert_rows_styled(ws, RECV_R0 + RECV_CAP - 1, extra_recv)
 
     total_r = TOTAL_R0 + extra_recv
     prep_r  = PREP_R0  + extra_recv
 
-    # Clear data rows
     for row in range(RECV_R0, RECV_R0 + max(RECV_CAP, len(receipts))):
         for c in ["A","B","C","D","E","F","G","H"]:
             _wc(ws, row, c, None)
@@ -355,7 +375,6 @@ def fill_summary(form: dict, out_path: Path):
 
         _wc(ws, row, "H", note, wrap=True)
 
-    # Total + preparer
     last_data = RECV_R0 + len(receipts) - 1 if receipts else RECV_R0
     _wc(ws, total_r, "F", f"=SUM(F{RECV_R0}:F{last_data})")
     _wc(ws, prep_r,  "G", f"制表人: {form.get('employeeName','')}")
@@ -379,12 +398,11 @@ def image_to_pdf(img_path: Path, pdf_path: Path):
     doc.build([RLImage(str(img_path), width=rw, height=rh)])
 
 
-# ── FastAPI endpoints ─────────────────────────────────────────────────────────
+# ── FastAPI ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
-    soffice = find_soffice()
-    return {"status": "ok", "libreoffice": soffice or "not found"}
+    return {"status": "ok", "libreoffice": find_soffice() or "not found"}
 
 
 @app.post("/generate-pdf")
@@ -410,7 +428,6 @@ async def generate_pdf(
             ext      = Path(upload.filename or "file").suffix.lower()
             raw_path = tmp / f"receipt_{i}{ext}"
             raw_path.write_bytes(await upload.read())
-
             if ext in (".jpg", ".jpeg", ".png", ".webp"):
                 pdf_path = tmp / f"receipt_{i}.pdf"
                 image_to_pdf(raw_path, pdf_path)
