@@ -208,14 +208,17 @@ def fill_cover(form: dict, out_path: Path):
     if ws.sheet_properties is None:
         ws.sheet_properties = WorksheetProperties()
 
-    # Fixed scale: reduce by 5% per extra row (min 70%) — no fitToHeight squish
-    scale = max(70, 100 - total_extra * 5) if total_extra > 0 else 100
-    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=False)
-    ws.page_setup.scale       = scale
-    ws.page_setup.paperSize   = 9       # A4
+    # Fit entire form content (print area below) onto exactly 1 page.
+    # fitToHeight=1 is safe here because print_area is set to exclude the
+    # remarks/non-printable section, so LibreOffice only sees the form rows.
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws.page_setup.fitToWidth  = 1
+    ws.page_setup.fitToHeight = 1
+    ws.page_setup.scale       = None   # must be unset; scale overrides fitTo*
+    ws.page_setup.paperSize   = 9      # A4
     ws.page_setup.orientation = "portrait"
     ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.5, bottom=0.5)
-    ws.print_options.horizontalCentered = True   # centre on page
+    ws.print_options.horizontalCentered = True
 
     # ── Set print area to cover form only (exclude non-printable remarks) ─────
     # The form ends ~7 rows after the allowance start
