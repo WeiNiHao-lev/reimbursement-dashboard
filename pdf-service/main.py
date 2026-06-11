@@ -261,7 +261,7 @@ def fill_cover(form: dict, out_path: Path):
 
     # ── Header ────────────────────────────────────────────────────────────────
     _wc(ws, 3, "A", f"员工姓名(Name)：{form.get('employeeName', '')}")
-    _wc(ws, 3, "C", f"部门(Apartment)：{form.get('department', '')}")
+    _wc(ws, 3, "C", f"部门(Department)：{form.get('department', '')}")
     _wc(ws, 4, "A", f"常驻地(Permanent Residence)：{form.get('permanentResidence', '')}")
     _wc(ws, 4, "C", f"出差事由(Purpose of Business Trip): {form.get('purpose', '')}")
 
