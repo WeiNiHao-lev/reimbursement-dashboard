@@ -77,48 +77,55 @@ def _insert_rows_safe(ws, at: int, count: int, style_src: int):
     """
     Insert `count` rows at `at`, then copy style from `style_src`.
 
-    Merges that CROSS the insertion boundary (min_row < at <= max_row) are split:
-    - The part above `at` is re-merged as before.
-    - The inserted rows are left as individual (writable) cells.
-    - The part below (at + count onwards) is re-merged.
-
-    This preserves section-title merges above the insertion without
-    accidentally unmerging them.
+    Handles two classes of merge:
+    A) Crossing (min_row < at <= max_row): split at the boundary so the
+       inserted rows become individually writable cells.
+    B) Shifting (min_row >= at): openpyxl has a known bug where it does
+       NOT update merge-range strings for ranges that start at or after
+       the insertion row. We fix this manually: snapshot all such ranges
+       before the insert, remove the stale strings, then re-add shifted
+       by `count`.
     """
-    # Snapshot merges that will be extended across the insertion
+    # Snapshot before insertion
     crossing = [
         (m.min_row, m.max_row, m.min_col, m.max_col)
         for m in list(ws.merged_cells.ranges)
         if m.min_row < at <= m.max_row
     ]
+    shifting = [
+        (m.min_row, m.max_row, m.min_col, m.max_col)
+        for m in list(ws.merged_cells.ranges)
+        if m.min_row >= at
+    ]
 
     ws.insert_rows(at, count)
 
+    # ── A) Fix crossing merges: split at the insertion boundary ──────────────
     for r0, r1, c0, c1 in crossing:
         c0l = get_column_letter(c0)
         c1l = get_column_letter(c1)
-        new_r1 = r1 + count  # original max row has shifted down
-
-        # Remove the (now extended) merge
-        try:
-            ws.unmerge_cells(f"{c0l}{r0}:{c1l}{new_r1}")
-        except Exception:
-            pass
-
-        # Re-merge the portion ABOVE the insertion (needs ≥ 2 rows)
+        new_r1 = r1 + count
+        try: ws.unmerge_cells(f"{c0l}{r0}:{c1l}{new_r1}")
+        except Exception: pass
         if at - 1 > r0:
-            try:
-                ws.merge_cells(f"{c0l}{r0}:{c1l}{at - 1}")
-            except Exception:
-                pass
-
-        # Re-merge the portion BELOW the insertion (needs ≥ 2 rows)
+            try: ws.merge_cells(f"{c0l}{r0}:{c1l}{at - 1}")
+            except Exception: pass
         below = at + count
         if new_r1 > below:
-            try:
-                ws.merge_cells(f"{c0l}{below}:{c1l}{new_r1}")
-            except Exception:
-                pass
+            try: ws.merge_cells(f"{c0l}{below}:{c1l}{new_r1}")
+            except Exception: pass
+
+    # ── B) Fix shifted merges: remove stale strings, re-add shifted ──────────
+    # Two-pass to avoid conflicts between old and new coordinate ranges.
+    for r0, r1, c0, c1 in shifting:
+        c0l, c1l = get_column_letter(c0), get_column_letter(c1)
+        try: ws.unmerge_cells(f"{c0l}{r0}:{c1l}{r1}")
+        except Exception: pass
+    for r0, r1, c0, c1 in shifting:
+        c0l, c1l = get_column_letter(c0), get_column_letter(c1)
+        new_r0, new_r1 = r0 + count, r1 + count
+        try: ws.merge_cells(f"{c0l}{new_r0}:{c1l}{new_r1}")
+        except Exception: pass
 
     # Copy style from reference row to each newly inserted row
     for i in range(count):
