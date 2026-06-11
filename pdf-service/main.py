@@ -276,8 +276,9 @@ def fill_cover(form: dict, out_path: Path):
             date_str = f"{d1} - {d2}" if d2 else d1
         except Exception:
             date_str = depart
+        trip_route = f"{t.get('origin', '')} - {t.get('destination', '')}"
         _wc(ws, row, "A", date_str)
-        _wc(ws, row, "B", f"{t.get('origin','')} - {t.get('destination','')}", wrap=True)
+        _wc(ws, row, "B", trip_route, wrap=True)
         _wc(ws, row, "C", t.get("vehicle", ""))
         _wc(ws, row, "D", t.get("ticketingMethod", ""))
         # Enforce center alignment on all trip rows (template + inserted)
@@ -292,6 +293,9 @@ def fill_cover(form: dict, out_path: Path):
                     )
                 except Exception:
                     pass
+        # Expand row height if route text wraps (~35 chars per line at col B width)
+        n_lines = max(1, -(-len(trip_route) // 35))
+        ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 24, n_lines * 16)
 
     # ── Transportation ────────────────────────────────────────────────────────
     for i, key in enumerate(all_transport):
@@ -302,6 +306,9 @@ def fill_cover(form: dict, out_path: Path):
         dcell = ws[f"D{row}"]
         if not isinstance(dcell, MergedCell):
             dcell.value = f"=B{row}+C{row}"
+        # Expand row height if route name wraps (~35 chars per line at col A width)
+        n_lines = max(1, -(-len(key) // 35))
+        ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 24, n_lines * 16)
 
     # ── Accommodation ─────────────────────────────────────────────────────────
     for i, a in enumerate(accommodation):
