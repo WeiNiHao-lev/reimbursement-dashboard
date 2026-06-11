@@ -15,6 +15,7 @@ from fastapi.responses import Response
 import openpyxl
 from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Alignment
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 from openpyxl.worksheet.properties import WorksheetProperties, PageSetupProperties
 from PyPDF2 import PdfMerger
@@ -72,30 +73,56 @@ def _copy_row_style(ws, src_row: int, dst_row: int):
         ws.row_dimensions[dst_row].height = ws.row_dimensions[src_row].height
 
 
-def _unmerge_row(ws, row: int):
-    """Remove every merged range that touches this row."""
-    to_remove = [str(m) for m in list(ws.merged_cells.ranges)
-                 if m.min_row <= row <= m.max_row]
-    for m in to_remove:
+def _insert_rows_safe(ws, at: int, count: int, style_src: int):
+    """
+    Insert `count` rows at `at`, then copy style from `style_src`.
+
+    Merges that CROSS the insertion boundary (min_row < at <= max_row) are split:
+    - The part above `at` is re-merged as before.
+    - The inserted rows are left as individual (writable) cells.
+    - The part below (at + count onwards) is re-merged.
+
+    This preserves section-title merges above the insertion without
+    accidentally unmerging them.
+    """
+    # Snapshot merges that will be extended across the insertion
+    crossing = [
+        (m.min_row, m.max_row, m.min_col, m.max_col)
+        for m in list(ws.merged_cells.ranges)
+        if m.min_row < at <= m.max_row
+    ]
+
+    ws.insert_rows(at, count)
+
+    for r0, r1, c0, c1 in crossing:
+        c0l = get_column_letter(c0)
+        c1l = get_column_letter(c1)
+        new_r1 = r1 + count  # original max row has shifted down
+
+        # Remove the (now extended) merge
         try:
-            ws.unmerge_cells(m)
+            ws.unmerge_cells(f"{c0l}{r0}:{c1l}{new_r1}")
         except Exception:
             pass
 
+        # Re-merge the portion ABOVE the insertion (needs ≥ 2 rows)
+        if at - 1 > r0:
+            try:
+                ws.merge_cells(f"{c0l}{r0}:{c1l}{at - 1}")
+            except Exception:
+                pass
 
-def _insert_rows_styled(ws, after_row: int, count: int):
-    """
-    Insert `count` rows after `after_row`.
-    Copy style first, then unmerge (so any cross-section merges get handled),
-    then re-copy style onto cells that were just freed from merges.
-    """
-    at = after_row + 1
-    ws.insert_rows(at, count)
+        # Re-merge the portion BELOW the insertion (needs ≥ 2 rows)
+        below = at + count
+        if new_r1 > below:
+            try:
+                ws.merge_cells(f"{c0l}{below}:{c1l}{new_r1}")
+            except Exception:
+                pass
+
+    # Copy style from reference row to each newly inserted row
     for i in range(count):
-        dst_row = at + i
-        _copy_row_style(ws, after_row, dst_row)   # ① copy (works on non-slave cells)
-        _unmerge_row(ws, dst_row)                  # ② free any extended merge slaves
-        _copy_row_style(ws, after_row, dst_row)   # ③ re-copy onto now-free cells
+        _copy_row_style(ws, style_src, at + i)
 
 
 def _wc(ws, row: int, col: str, value, wrap: bool = False):
@@ -130,12 +157,6 @@ def fill_cover(form: dict, out_path: Path):
     wb.active = wb[active_name]
     ws = wb.active
 
-    # Clear fixed print area so all rows (including inserted ones) appear in PDF
-    try:
-        ws.print_area = None
-    except Exception:
-        pass
-
     # ── Collect data ──────────────────────────────────────────────────────────
     trip_info     = form.get("tripInfo", [])
     accommodation = form.get("accommodation", [])
@@ -164,35 +185,43 @@ def fill_cover(form: dict, out_path: Path):
     extra_trip  = max(0, len(trip_info)     - TRIP_CAP)
     extra_trns  = max(0, len(all_transport) - TRNS_CAP)
     extra_accom = max(0, len(accommodation) - ACCOM_CAP)
-    has_overflow = extra_trip > 0 or extra_trns > 0 or extra_accom > 0
+    total_extra = extra_trip + extra_trns + extra_accom
 
-    # ── Page setup ────────────────────────────────────────────────────────────
-    if ws.sheet_properties is None:
-        ws.sheet_properties = WorksheetProperties()
-    if has_overflow:
-        # Scale to fit all content onto 1 page (only when rows exceed template capacity)
-        ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-        ws.page_setup.fitToWidth  = 1
-        ws.page_setup.fitToHeight = 1
-    else:
-        ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=False)
-        ws.page_setup.scale = 100
-    ws.page_setup.paperSize   = 9
-    ws.page_setup.orientation = "portrait"
-    ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.5, bottom=0.5)
-
-    # ── Insert extra rows bottom → top ────────────────────────────────────────
+    # ── Insert extra rows bottom → top using safe merge-splitting ─────────────
+    # (bottom first so earlier row numbers stay stable)
     if extra_accom > 0:
-        _insert_rows_styled(ws, ACCOM_R0 + ACCOM_CAP - 1, extra_accom)
+        at = ACCOM_R0 + ACCOM_CAP
+        _insert_rows_safe(ws, at, extra_accom, at - 1)
     if extra_trns > 0:
-        _insert_rows_styled(ws, TRNS_R0 + TRNS_CAP - 1, extra_trns)
+        at = TRNS_R0 + TRNS_CAP
+        _insert_rows_safe(ws, at, extra_trns, at - 1)
     if extra_trip > 0:
-        _insert_rows_styled(ws, TRIP_R0 + TRIP_CAP - 1, extra_trip)
+        at = TRIP_R0 + TRIP_CAP
+        _insert_rows_safe(ws, at, extra_trip, at - 1)
 
     # ── Recalculate section starts after insertions ───────────────────────────
     trns_r  = TRNS_R0  + extra_trip
     accom_r = ACCOM_R0 + extra_trip + extra_trns
     allow_r = ALLOW_R0 + extra_trip + extra_trns + extra_accom
+
+    # ── Page setup ────────────────────────────────────────────────────────────
+    if ws.sheet_properties is None:
+        ws.sheet_properties = WorksheetProperties()
+
+    # Fixed scale: reduce by 5% per extra row (min 70%) — no fitToHeight squish
+    scale = max(70, 100 - total_extra * 5) if total_extra > 0 else 100
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=False)
+    ws.page_setup.scale       = scale
+    ws.page_setup.paperSize   = 9       # A4
+    ws.page_setup.orientation = "portrait"
+    ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.5, bottom=0.5)
+    ws.print_options.horizontalCentered = True   # centre on page
+
+    # ── Set print area to cover form only (exclude non-printable remarks) ─────
+    # The form ends ~7 rows after the allowance start
+    form_end = allow_r + 7
+    last_col = get_column_letter(ws.max_column)
+    ws.print_area = f"A1:{last_col}{form_end}"
 
     # ── Clear old template data ───────────────────────────────────────────────
     for row in range(TRIP_R0, TRIP_R0 + max(TRIP_CAP, len(trip_info))):
@@ -225,7 +254,7 @@ def fill_cover(form: dict, out_path: Path):
         _wc(ws, row, "B", f"{t.get('origin','')} - {t.get('destination','')}", wrap=True)
         _wc(ws, row, "C", t.get("vehicle", ""))
         _wc(ws, row, "D", t.get("ticketingMethod", ""))
-        # Explicitly enforce center alignment on every trip row (template AND inserted)
+        # Enforce center alignment on all trip rows (template + inserted)
         for col in ["A", "B", "C", "D"]:
             cell = ws[f"{col}{row}"]
             if not isinstance(cell, MergedCell):
@@ -300,11 +329,6 @@ def fill_summary(form: dict, out_path: Path):
     wb = openpyxl.load_workbook(SUMMARY_TEMPLATE)
     ws = wb.active
 
-    try:
-        ws.print_area = None
-    except Exception:
-        pass
-
     if ws.sheet_properties is None:
         ws.sheet_properties = WorksheetProperties()
     ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
@@ -325,7 +349,7 @@ def fill_summary(form: dict, out_path: Path):
 
     extra_recv = max(0, len(receipts) - RECV_CAP)
     if extra_recv > 0:
-        _insert_rows_styled(ws, RECV_R0 + RECV_CAP - 1, extra_recv)
+        _insert_rows_safe(ws, RECV_R0 + RECV_CAP, extra_recv, RECV_R0 + RECV_CAP - 1)
 
     total_r = TOTAL_R0 + extra_recv
     prep_r  = PREP_R0  + extra_recv
@@ -456,6 +480,5 @@ async def generate_pdf(
         )
 
     except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[generate-pdf ERROR]\n{tb}", flush=True)
+        print(f"[generate-pdf ERROR]\n{traceback.format_exc()}", flush=True)
         raise HTTPException(status_code=500, detail=str(e))
