@@ -205,26 +205,24 @@ def fill_cover(form: dict, out_path: Path):
     allow_r = ALLOW_R0 + extra_trip + extra_trns + extra_accom
 
     # ── Page setup ────────────────────────────────────────────────────────────
-    if ws.sheet_properties is None:
-        ws.sheet_properties = WorksheetProperties()
-
-    # Fit entire form content (print area below) onto exactly 1 page.
-    # fitToHeight=1 is safe here because print_area is set to exclude the
-    # remarks/non-printable section, so LibreOffice only sees the form rows.
-    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    ws.page_setup.fitToWidth  = 1
-    ws.page_setup.fitToHeight = 1
-    ws.page_setup.scale       = None   # must be unset; scale overrides fitTo*
-    ws.page_setup.paperSize   = 9      # A4
-    ws.page_setup.orientation = "portrait"
-    ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.5, bottom=0.5)
+    # Preserve the template's native page setup — it is already configured to
+    # produce a correct A4 single-page PDF. Only add horizontal centering and
+    # update the print area for any rows we inserted above.
     ws.print_options.horizontalCentered = True
 
-    # ── Set print area to cover form only (exclude non-printable remarks) ─────
-    # The form ends ~7 rows after the allowance start
-    form_end = allow_r + 7
-    last_col = get_column_letter(ws.max_column)
-    ws.print_area = f"A1:{last_col}{form_end}"
+    # ── Set print area ────────────────────────────────────────────────────────
+    # Read the template's existing end row and extend it by the number of rows
+    # we inserted. ALWAYS hardcode column "D" — the title rows may have merged
+    # cells reaching column H or beyond, making max_column >> 4 and doubling
+    # the rendered page width when fed to LibreOffice.
+    import re as _re
+    orig_end = 35  # safe fallback
+    orig_pa = ws.print_area  # e.g. "$A$1:$D$35" or "A1:D35"
+    if orig_pa:
+        m = _re.search(r'\$?[A-Z]+\$?(\d+)\s*$', orig_pa)
+        if m:
+            orig_end = int(m.group(1))
+    ws.print_area = f"A1:D{orig_end + total_extra}"
 
     # ── Clear old template data ───────────────────────────────────────────────
     for row in range(TRIP_R0, TRIP_R0 + max(TRIP_CAP, len(trip_info))):
