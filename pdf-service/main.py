@@ -397,10 +397,15 @@ def fill_summary(form: dict, out_path: Path):
         if reason:
             note = f"{note}; {reason}" if note else reason
         _wc(ws, row, "H", note, wrap=True)
+        # Expand row height so wrapped remarks text isn't clipped.
+        # Estimate ~15pt per line; assume ~60 chars per line at this column width.
+        if note:
+            lines = max(1, (len(note) + 59) // 60)
+            ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 15, lines * 15)
 
     last_data = RECV_R0 + len(receipts) - 1 if receipts else RECV_R0
     _wc(ws, total_r, "F", f"=SUM(F{RECV_R0}:F{last_data})")
-    _wc(ws, prep_r,  "G", f"制表人: {form.get('employeeName','')}")
+    _wc(ws, prep_r,  "G", "制表人:")   # left blank — filled manually
     _wc(ws, prep_r,  "H", "审核人:")
 
     wb.save(out_path)
