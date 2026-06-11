@@ -100,6 +100,20 @@ def _insert_rows_safe(ws, at: int, count: int, style_src: int):
 
     ws.insert_rows(at, count)
 
+    # ── Fix row dimensions: insert_rows shifts _cells but NOT row_dimensions ──
+    # Snapshot was taken before insert; now move all explicit heights >= at
+    # upward by `count` so they follow their cell content.
+    dims_to_shift = {
+        row: ws.row_dimensions[row].height
+        for row in list(ws.row_dimensions.keys())
+        if row >= at
+    }
+    for row in dims_to_shift:                        # clear old positions
+        ws.row_dimensions[row].height = None
+    for old_row, h in dims_to_shift.items():         # write at shifted positions
+        if h is not None:
+            ws.row_dimensions[old_row + count].height = h
+
     # ── A) Fix crossing merges: split at the insertion boundary ──────────────
     for r0, r1, c0, c1 in crossing:
         c0l = get_column_letter(c0)
@@ -331,6 +345,9 @@ def fill_cover(form: dict, out_path: Path):
             _wc(ws, allow_r, "D", days * daily)
         except Exception:
             pass
+
+    # 实际报销总金额 row uses 18pt bold — give it extra height for LibreOffice
+    ws.row_dimensions[31 + total_extra].height = 36
 
     wb.save(out_path)
 
